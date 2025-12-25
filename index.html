@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manga Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Chivo:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="texture"></div>
+  <div class="app-shell">
+    <header class="hero">
+      <p class="eyebrow">Reading queue companion</p>
+      <h1>Manga Tracker</h1>
+      <p class="lede">Keep tabs on the sites you rely on, whitelist the series you actually read, and let the tracker surface everything in one tidy view.</p>
+    </header>
+
+    <main class="grid">
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Tracked Websites</h2>
+          <p>Add the sources you want to poll.</p>
+        </div>
+        <form id="website-form" class="stack" autocomplete="off">
+          <label>
+            <span>Friendly name</span>
+            <input type="text" name="label" placeholder="MangaDex" required>
+          </label>
+          <label>
+            <span>URL</span>
+            <input type="url" name="url" placeholder="https://mangadex.org" required>
+          </label>
+          <button type="submit">Add Website</button>
+        </form>
+        <ul id="website-list" class="tag-list" aria-live="polite"></ul>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Reading Whitelist</h2>
+          <p>List only the series you care about.</p>
+        </div>
+        <form id="series-form" class="stack" autocomplete="off">
+          <label>
+            <span>Series title</span>
+            <input type="text" name="title" placeholder="Frieren" required>
+          </label>
+          <button type="submit">Add Series</button>
+        </form>
+        <ul id="series-list" class="tag-list" aria-live="polite"></ul>
+      </section>
+
+      <section class="panel span-columns">
+        <div class="panel-header">
+          <h2>Now Reading</h2>
+          <p>Matches between your whitelist and the sites you track.</p>
+        </div>
+        <div id="results-empty" class="empty-state" hidden>
+          <p>No overlaps yet. Add at least one website and one series to see matches.</p>
+        </div>
+        <ul id="results-list" class="result-list" aria-live="polite"></ul>
+      </section>
+    </main>
+  </div>
+
+  <template id="tag-template">
+    <li>
+      <span class="tag-label"></span>
+      <button type="button" class="tag-remove" aria-label="Remove">&times;</button>
+    </li>
+  </template>
+
+  <template id="result-template">
+    <li>
+      <div class="result-title"></div>
+      <p class="result-sources"></p>
+    </li>
+  </template>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
