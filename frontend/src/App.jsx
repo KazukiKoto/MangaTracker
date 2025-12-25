@@ -4,6 +4,7 @@ import Layout from "./components/Layout";
 import DashboardPage from "./pages/Dashboard";
 import WebsitesPage from "./pages/Websites";
 import SeriesPage from "./pages/Series";
+import TrackedPage from "./pages/Tracked";
 import { TrackerContext } from "./context/TrackerContext";
 
 const deriveApiBase = () => {
@@ -19,6 +20,77 @@ const deriveApiBase = () => {
 };
 
 const API_BASE = deriveApiBase();
+const READ_STORAGE_KEY = "manga-tracker:last-read";
+
+const loadReadChapters = () => {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(READ_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const persistReadChapters = (payload) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(READ_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    /* ignore storage errors */
+  }
+};
+
+const selectLatestSource = (match) => {
+  if (!match || !Array.isArray(match.sources) || !match.sources.length) {
+    return null;
+  }
+  const ordered = [...match.sources].sort((a, b) => {
+    const left = a.latest_chapter_number ?? -1;
+    const right = b.latest_chapter_number ?? -1;
+    if (left !== right) {
+      return right - left;
+    }
+    return (b.latest_chapter || "").localeCompare(a.latest_chapter || "");
+  });
+  const numeric = ordered.find((source) => typeof source.latest_chapter_number === "number");
+  if (numeric) {
+    return numeric;
+  }
+  return ordered[0];
+};
+
+const formatChapterLabel = (source) => {
+  if (!source) {
+    return "Unknown";
+  }
+  if (source.latest_chapter) {
+    return source.latest_chapter;
+  }
+  if (source.latest_chapter_number != null) {
+    return String(source.latest_chapter_number);
+  }
+  return "Unknown";
+};
+
+const buildChapterToken = (source) => {
+  if (!source) {
+    return null;
+  }
+  if (source.latest_chapter_number != null) {
+    return `num:${source.latest_chapter_number}`;
+  }
+  if (source.latest_chapter) {
+    return `label:${source.latest_chapter.toLowerCase()}`;
+  }
+  return null;
+};
 
 const request = async (path, options = {}) => {
   const config = {
@@ -49,6 +121,7 @@ function App() {
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [readChapters, setReadChapters] = useState(() => loadReadChapters());
 
   const hydrate = useCallback(async () => {
     try {
@@ -72,6 +145,10 @@ function App() {
   useEffect(() => {
     hydrate();
   }, [hydrate]);
+
+  useEffect(() => {
+    persistReadChapters(readChapters);
+  }, [readChapters]);
 
   const refreshMatches = useCallback(async () => {
     try {
@@ -175,9 +252,65 @@ function App() {
     [hydrate]
   );
 
+  const matchSummaries = useMemo(() => {
+    return matches.map((match) => {
+      const latestSource = selectLatestSource(match);
+      const chapterToken = buildChapterToken(latestSource);
+      const chapterLabel = formatChapterLabel(latestSource);
+      const key = match.title.trim().toLowerCase();
+      const lastReadToken = key ? readChapters[key] : null;
+      const isUnread = Boolean(chapterToken && chapterToken !== lastReadToken);
+      return {
+        match,
+        title: match.title,
+        latestSource,
+        chapterLabel,
+        chapterToken,
+        isUnread,
+      };
+    });
+  }, [matches, readChapters]);
+
+  const unreadMatches = useMemo(
+    () => matchSummaries.filter((entry) => entry.isUnread && entry.chapterToken),
+    [matchSummaries]
+  );
+
+  const markChaptersRead = useCallback((entries) => {
+    if (!entries.length) {
+      return;
+    }
+    setReadChapters((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      entries.forEach(({ title, token }) => {
+        if (!title || !token) {
+          return;
+        }
+        const key = title.trim().toLowerCase();
+        if (!key) {
+          return;
+        }
+        if (next[key] !== token) {
+          next[key] = token;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const markChapterRead = useCallback(
+    (title, token) => {
+      if (!title || !token) return;
+      markChaptersRead([{ title, token }]);
+    },
+    [markChaptersRead]
+  );
+
   const contextValue = useMemo(
     () => ({
-      data: { websites, series, matches },
+      data: { websites, series, matches, matchSummaries, unreadMatches },
       status: { loading, error },
       actions: {
         hydrate,
@@ -188,12 +321,16 @@ function App() {
         addSeries,
         updateSeries,
         removeSeries,
+        markChapterRead,
+        markChaptersRead,
       },
     }),
     [
       websites,
       series,
       matches,
+      matchSummaries,
+      unreadMatches,
       loading,
       error,
       hydrate,
@@ -204,6 +341,8 @@ function App() {
       addSeries,
       updateSeries,
       removeSeries,
+      markChapterRead,
+      markChaptersRead,
     ]
   );
 
@@ -213,6 +352,7 @@ function App() {
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<DashboardPage />} />
+            <Route path="/tracked" element={<TrackedPage />} />
             <Route path="/websites" element={<WebsitesPage />} />
             <Route path="/series" element={<SeriesPage />} />
           </Route>

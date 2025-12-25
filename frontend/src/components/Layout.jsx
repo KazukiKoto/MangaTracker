@@ -3,6 +3,7 @@ import { useTracker } from "../context/TrackerContext";
 
 const links = [
   { to: "/", label: "Dashboard", end: true },
+  { to: "/tracked", label: "Tracked Manga" },
   { to: "/websites", label: "Tracked Websites" },
   { to: "/series", label: "Reading List" },
 ];
