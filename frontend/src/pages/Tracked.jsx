@@ -1,10 +1,9 @@
 import Panel from "../components/Panel";
-import SeriesCard from "../components/SeriesCard";
 import { useTracker } from "../context/TrackerContext";
 
 const TrackedPage = () => {
   const {
-    data: { websites, series, matches },
+    data: { websites, series, matchSummaries },
     status: { loading },
     actions: { refreshMatches },
   } = useTracker();
@@ -23,7 +22,7 @@ const TrackedPage = () => {
       <Panel title="Reading List">
         <div className="mb-4 flex items-center justify-between gap-4">
           <p className="text-sm text-slate-500">
-            {matches.length} match{matches.length === 1 ? "" : "es"} across {websites.length} site
+            {matchSummaries.length} match{matchSummaries.length === 1 ? "" : "es"} across {websites.length} site
             {websites.length === 1 ? "" : "s"}.
           </p>
           <button
@@ -38,11 +37,37 @@ const TrackedPage = () => {
           <div className="rounded-xl border border-slate-100 bg-white/70 px-4 py-6 text-center text-sm text-slate-500">
             Loading tracker data…
           </div>
-        ) : matches.length ? (
-          <ul className="flex flex-col gap-4">
-            {matches.map((match) => (
-              <SeriesCard key={match.title} match={match} />
-            ))}
+        ) : matchSummaries.length ? (
+          <ul className="flex flex-col gap-2">
+            {matchSummaries.map((entry) => {
+              const siteLabel = entry.latestSource?.site;
+              const link = entry.latestSource?.link;
+              const chapterLabel = entry.chapterLabel ?? "Unknown";
+              return (
+                <li
+                  key={`${entry.title}-${entry.chapterToken ?? "na"}`}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-white/70 px-4 py-2 text-sm"
+                >
+                  <p className="text-sm text-ink">
+                    <span className="font-semibold">{entry.title}</span>
+                    <span className="text-slate-500">
+                      {" "}• Chapter {chapterLabel}
+                      {siteLabel ? ` • ${siteLabel}` : ""}
+                    </span>
+                  </p>
+                  {link && (
+                    <a
+                      href={link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs font-semibold uppercase tracking-wide text-glow hover:underline"
+                    >
+                      Open
+                    </a>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <div className="rounded-xl border-2 border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
