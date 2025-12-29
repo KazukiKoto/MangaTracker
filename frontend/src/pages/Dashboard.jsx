@@ -39,11 +39,11 @@ const DashboardPage = () => {
 
   const emptyCopy = activeTab === "unread"
     ? "You are up to date on every tracked series."
-    : "No tracked overlaps yet—refresh to check again.";
+    : "No tracked overlaps found — refresh to check again.";
 
   return (
     <div className="flex flex-col gap-8">
-      <Panel title="Snapshot" copy="Quick stats from the current tracker state">
+      <Panel title="Tracked">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-slate-500">Websites</p>
@@ -64,7 +64,7 @@ const DashboardPage = () => {
         </div>
       </Panel>
 
-      <Panel title="Unread Chapters" copy="Stay ahead of every new release" className="md:col-span-2">
+      <Panel title="Unread Chapters" className="md:col-span-2">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex rounded-full border border-white/60 bg-white/70 p-1 text-sm">
             {TAB_OPTIONS.map((tab) => (

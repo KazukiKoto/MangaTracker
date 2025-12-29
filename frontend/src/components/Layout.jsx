@@ -3,9 +3,9 @@ import { useTracker } from "../context/TrackerContext";
 
 const links = [
   { to: "/", label: "Dashboard", end: true },
-  { to: "/tracked", label: "Tracked Manga" },
+  { to: "/tracked", label: "Reading List" },
   { to: "/websites", label: "Tracked Websites" },
-  { to: "/series", label: "Reading List" },
+  { to: "/series", label: "Tracked Manga" },
 ];
 
 const Layout = () => {
@@ -21,12 +21,12 @@ const Layout = () => {
       <div className="relative mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-16 pt-10 sm:px-6 lg:px-0">
         <header className="flex flex-col gap-5 text-white drop-shadow-2xl">
           <div>
-            <p className="uppercase tracking-[0.35em] text-xs text-white/70">Reading queue companion</p>
+            <p className="uppercase tracking-[0.35em] text-xs text-white/70">Reading companion</p>
             <h1 className="mt-3 text-4xl font-semibold leading-[1.1] sm:text-5xl lg:text-6xl">
               Manga Tracker
             </h1>
             <p className="mt-4 max-w-2xl text-lg text-white/90">
-              Manage the sources you trust, curate your reading whitelist, and keep tabs on the latest chapters across every site.
+              Manage the sources you trust, curate your reading list, and keep tabs on the latest chapters across every site.
             </p>
           </div>
           <nav className="flex flex-wrap gap-3 text-sm">

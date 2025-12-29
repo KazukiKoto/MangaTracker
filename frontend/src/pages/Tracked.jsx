@@ -20,10 +20,7 @@ const TrackedPage = () => {
 
   return (
     <div className="flex flex-col gap-8">
-      <Panel
-        title="Tracked Manga"
-        copy="Live overlaps between your whitelist and every tracked source"
-      >
+      <Panel title="Reading List">
         <div className="mb-4 flex items-center justify-between gap-4">
           <p className="text-sm text-slate-500">
             {matches.length} match{matches.length === 1 ? "" : "es"} across {websites.length} site

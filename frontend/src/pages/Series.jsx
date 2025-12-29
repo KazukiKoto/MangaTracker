@@ -15,13 +15,13 @@ const SeriesPage = () => {
     [series, editingId]
   );
 
-  const handleCreate = async ({ title }) => {
-    await addSeries({ title });
+  const handleCreate = async ({ title, aliases }) => {
+    await addSeries({ title, aliases });
   };
 
-  const handleUpdate = async ({ title }) => {
+  const handleUpdate = async ({ title, aliases }) => {
     if (!editingId) return;
-    await updateSeries(editingId, { title });
+    await updateSeries(editingId, { title, aliases });
     setEditingId(null);
   };
 
@@ -39,20 +39,25 @@ const SeriesPage = () => {
   return (
     <div className="flex flex-col gap-8">
       <Panel
-        title={editingSeries ? "Edit Series" : "Add Series"}
-        copy={editingSeries ? `Renaming ${editingSeries.title}` : "Whitelist only the series you care about."}
+        title={editingSeries ? "Edit Tracked Manga" : "Add Tracked Manga"}
+        copy={
+          editingSeries
+            ? `Updating ${editingSeries.title}`
+            : "Add titles you want to monitor across every site."
+        }
       >
         <SeriesForm
           mode={editingSeries ? "edit" : "create"}
           initialValue={editingSeries?.title ?? ""}
+          initialAliases={editingSeries?.aliases ?? []}
           onSubmit={editingSeries ? handleUpdate : handleCreate}
           onCancel={() => setEditingId(null)}
         />
       </Panel>
 
-      <Panel title="Reading Whitelist" copy="Series currently being monitored">
+      <Panel title="Tracked Manga" copy="Series currently being monitored">
         {series.length === 0 ? (
-          <p className="text-sm text-slate-500">No series yet. Add one above to get started.</p>
+          <p className="text-sm text-slate-500">No titles yet. Add one above to get started.</p>
         ) : (
           <ul className="flex flex-col gap-3">
             {series.map((item) => (
@@ -60,7 +65,14 @@ const SeriesPage = () => {
                 key={item.id}
                 className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white/80 px-4 py-3"
               >
-                <span className="font-semibold text-ink">{item.title}</span>
+                <div>
+                  <p className="font-semibold text-ink">{item.title}</p>
+                  {item.aliases && item.aliases.length > 0 && (
+                    <p className="text-xs text-slate-500">
+                      Also known as: {item.aliases.join(", ")}
+                    </p>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <button
                     className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:border-slate-500"

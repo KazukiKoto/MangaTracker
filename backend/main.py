@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional, Tuple, Literal
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Literal
 from uuid import uuid4
 from difflib import SequenceMatcher
 
@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
-from pydantic import BaseModel, HttpUrl, ValidationError
+from pydantic import BaseModel, Field, HttpUrl, ValidationError
 from urllib.parse import urljoin, urlparse, urlunparse, urlencode, parse_qs
 from bs4 import BeautifulSoup
 
@@ -89,6 +89,7 @@ class WebsiteUpdate(BaseModel):
 
 class SeriesCreate(BaseModel):
     title: str
+    aliases: List[str] = Field(default_factory=list)
 
 
 class Series(SeriesCreate):
@@ -97,6 +98,7 @@ class Series(SeriesCreate):
 
 class SeriesUpdate(BaseModel):
     title: Optional[str] = None
+    aliases: Optional[List[str]] = None
 
 
 class SourceHit(BaseModel):
@@ -176,11 +178,16 @@ class InMemoryStore:
         return updated
 
     def add_series(self, payload: SeriesCreate) -> Series:
-        normalized = payload.title.strip().lower()
+        title = payload.title.strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        aliases = normalize_aliases(payload.aliases)
+        candidate_tokens = series_tokens(title, aliases)
         for existing in self.series.values():
-            if existing.title.strip().lower() == normalized:
+            existing_tokens = series_tokens(existing.title, getattr(existing, "aliases", []) or [])
+            if candidate_tokens & existing_tokens:
                 raise HTTPException(status_code=409, detail="Series already tracked")
-        record = Series(id=str(uuid4()), **payload.dict())
+        record = Series(id=str(uuid4()), title=title, aliases=aliases)
         self.series[record.id] = record
         self._persist_series()
         return record
@@ -197,15 +204,24 @@ class InMemoryStore:
             raise HTTPException(status_code=404, detail="Series not found")
 
         update_data = payload.model_dump(exclude_unset=True)
+        candidate_title = update_data.get("title", record.title)
         if "title" in update_data and update_data["title"] is not None:
-            candidate = update_data["title"].strip()
-            normalized = candidate.lower()
-            for existing_id, existing in self.series.items():
-                if existing_id == series_id:
-                    continue
-                if existing.title.strip().lower() == normalized:
-                    raise HTTPException(status_code=409, detail="Series already tracked")
-            update_data["title"] = candidate
+            candidate_title = update_data["title"].strip()
+            if not candidate_title:
+                raise HTTPException(status_code=400, detail="Title cannot be empty")
+            update_data["title"] = candidate_title
+        candidate_aliases = update_data.get("aliases", record.aliases or [])
+        if "aliases" in update_data:
+            candidate_aliases = normalize_aliases(update_data["aliases"])
+            update_data["aliases"] = candidate_aliases
+
+        candidate_tokens = series_tokens(candidate_title, candidate_aliases)
+        for existing_id, existing in self.series.items():
+            if existing_id == series_id:
+                continue
+            existing_tokens = series_tokens(existing.title, getattr(existing, "aliases", []) or [])
+            if candidate_tokens & existing_tokens:
+                raise HTTPException(status_code=409, detail="Series already tracked")
 
         updated = record.model_copy(update=update_data)
         self.series[series_id] = updated
@@ -353,12 +369,14 @@ async def now_reading() -> List[Match]:
     if not store.websites or not store.series:
         return []
 
-    whitelist = {
-        series.title.strip().casefold(): series.title for series in store.series.values()
-    }
+    series_terms = build_series_terms(store.series.values())
+    if not series_terms:
+        return []
+
+    canonical_map = build_canonical_map(store.series.values())
 
     websites = list(store.websites.values())
-    matches, missing_cache = await scan_sites_for_series(websites, whitelist)
+    matches, missing_cache = await scan_sites_for_series(websites, series_terms)
     if matches:
         return matches
 
@@ -367,7 +385,7 @@ async def now_reading() -> List[Match]:
         asyncio.create_task(refresh_site_cache(websites))
 
     # Fallback to mock catalogs when live scanning yields nothing
-    return collect_mock_matches(websites, whitelist)
+    return collect_mock_matches(websites, canonical_map)
 
 
 def _get_index_file() -> Path:
@@ -397,18 +415,18 @@ def serve_spa(full_path: str) -> FileResponse:
 
 
 async def scan_sites_for_series(
-    websites: List[Website], whitelist: Dict[str, str]
+    websites: List[Website], series_terms: List[Dict[str, str]]
 ) -> tuple[List[Match], bool]:
-    if not websites or not whitelist:
+    if not websites or not series_terms:
         return ([], False)
 
-    return matches_from_cache(websites, whitelist)
+    return matches_from_cache(websites, series_terms)
 
 
 def matches_from_cache(
-    websites: List[Website], whitelist: Dict[str, str]
+    websites: List[Website], series_terms: List[Dict[str, str]]
 ) -> tuple[List[Match], bool]:
-    if not whitelist:
+    if not series_terms:
         return ([], False)
 
     match_index: Dict[str, Dict[str, SourceHit]] = {}
@@ -423,12 +441,14 @@ def matches_from_cache(
             continue
         source_label = site.label or normalize_host(str(site.url))
         candidates = extract_candidate_entries(soup, str(site.url))
-        for title in whitelist.values():
-            hit = locate_series_hit(candidates, title, str(site.url))
+        for term in series_terms:
+            search_label = term["search"]
+            display_title = term["display"]
+            hit = locate_series_hit(candidates, search_label, str(site.url))
             if not hit:
                 continue
             link, chapter_label, chapter_number = hit
-            match_index.setdefault(title, {})[source_label] = SourceHit(
+            match_index.setdefault(display_title, {})[source_label] = SourceHit(
                 site=source_label,
                 link=link or str(site.url),
                 latest_chapter=chapter_label,
@@ -601,6 +621,71 @@ def normalize_text(value: str) -> str:
     return " ".join(value.split())
 
 
+def canonicalize_title(value: str) -> str:
+    cleaned = normalize_text(value or "")
+    return re.sub(r"\s+", "", cleaned)
+
+
+def normalize_aliases(values: Iterable[str] | None) -> List[str]:
+    result: List[str] = []
+    if not values:
+        return result
+    seen: set[str] = set()
+    for raw in values:
+        if not isinstance(raw, str):
+            continue
+        candidate = raw.strip()
+        if not candidate:
+            continue
+        token = canonicalize_title(candidate)
+        if not token or token in seen:
+            continue
+        seen.add(token)
+        result.append(candidate)
+    return result
+
+
+def series_tokens(title: str, aliases: Iterable[str] | None = None) -> set[str]:
+    tokens: set[str] = set()
+    values: List[str] = []
+    if title:
+        values.append(title)
+    if aliases:
+        values.extend(aliases)
+    for value in values:
+        token = canonicalize_title(value)
+        if token:
+            tokens.add(token)
+    return tokens
+
+
+def build_series_terms(records: Iterable[Series]) -> List[Dict[str, str]]:
+    terms: List[Dict[str, str]] = []
+    for record in records:
+        display = record.title
+        names = [record.title]
+        if record.aliases:
+            names.extend(record.aliases)
+        for name in names:
+            candidate = name.strip()
+            if not candidate:
+                continue
+            canonical = canonicalize_title(candidate)
+            if not canonical:
+                continue
+            terms.append({"display": display, "search": candidate, "canonical": canonical})
+    return terms
+
+
+def build_canonical_map(records: Iterable[Series]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for record in records:
+        for token in series_tokens(record.title, record.aliases):
+            if token and token not in mapping:
+                mapping[token] = record.title
+    return mapping
+
+
 PROGRESS_KEYWORDS = {"chapter", "ch", "vol", "volume", "episode", "ep", "season"}
 
 
@@ -650,9 +735,9 @@ def is_structural_match(
 
 
 def collect_mock_matches(
-    websites: List[Website], whitelist: Dict[str, str]
+    websites: List[Website], canonical_map: Dict[str, str]
 ) -> List[Match]:
-    if not whitelist:
+    if not canonical_map:
         return []
 
     match_index: Dict[str, Dict[str, SourceHit]] = {}
@@ -663,10 +748,10 @@ def collect_mock_matches(
             continue
         source_label = site.label or host
         for candidate in catalog:
-            key = candidate.strip().casefold()
-            if key not in whitelist:
+            key = canonicalize_title(candidate)
+            if key not in canonical_map:
                 continue
-            match_index.setdefault(whitelist[key], {})[source_label] = SourceHit(
+            match_index.setdefault(canonical_map[key], {})[source_label] = SourceHit(
                 site=source_label,
                 link=str(site.url),
                 latest_chapter=None,
