@@ -205,6 +205,7 @@ MAX_RESPONSE_BYTES = 1_000_000
 USER_AGENT = "MangaTrackerBot/0.1 (+https://github.com/)"
 POLL_INTERVAL_SECONDS = 60
 CHAPTER_REGEX = re.compile(r"(?:chapter|ch\.?|c)\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
+MAX_CANDIDATE_ELEMENTS = 8000
 
 poller_task: asyncio.Task | None = None
 
@@ -819,6 +820,7 @@ def build_page_urls(site: Website) -> List[str]:
             urls.append(config.template.replace("{page}", str(page_number)))
         else:
             urls.append(base_url)
+    logger.info("Pagination for %s yields %d urls", site.label, len(urls))
     return urls or [base_url]
 
 
@@ -858,7 +860,7 @@ def extract_candidate_entries(soup: BeautifulSoup, base_url: str) -> List[Candid
                 "context": context,
             }
         )
-        if len(entries) >= 1500:
+        if len(entries) >= MAX_CANDIDATE_ELEMENTS:
             break
     return entries
 
