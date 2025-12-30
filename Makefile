@@ -9,4 +9,5 @@ stop:
 	$(COMPOSE) down
 
 rebuild:
+	$(COMPOSE) down
 	$(COMPOSE) up -d --build
