@@ -262,6 +262,7 @@ class SeriesCreate(BaseModel):
     title: str
     aliases: List[str] = Field(default_factory=list)
     site_overrides: Dict[str, str] = Field(default_factory=dict)
+    last_read_token: Optional[str] = None
 
 
 class Series(SeriesCreate):
@@ -272,6 +273,7 @@ class SeriesUpdate(BaseModel):
     title: Optional[str] = None
     aliases: Optional[List[str]] = None
     site_overrides: Optional[Dict[str, str]] = None
+    last_read_token: Optional[str] = None
 
 
 class ChapterListing(BaseModel):
@@ -403,6 +405,7 @@ class InMemoryStore:
             title=title,
             aliases=aliases,
             site_overrides=normalize_site_overrides(payload.site_overrides),
+            last_read_token=normalize_optional_str(payload.last_read_token),
         )
         self.series[record.id] = record
         self._persist_series()
@@ -433,6 +436,8 @@ class InMemoryStore:
 
         if "site_overrides" in update_data:
             update_data["site_overrides"] = normalize_site_overrides(update_data["site_overrides"])
+        if "last_read_token" in update_data:
+            update_data["last_read_token"] = normalize_optional_str(update_data["last_read_token"])
 
         candidate_tokens = series_tokens(candidate_title, candidate_aliases)
         for existing_id, existing in self.series.items():

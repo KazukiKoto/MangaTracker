@@ -28,7 +28,7 @@ const TrackedPage = () => {
   const {
     data: { websites, series, matchSummaries },
     status: { loading, refreshingMatches },
-    actions: { refreshMatches },
+    actions: { refreshMatches, markChapterRead },
   } = useTracker();
   const [expandedTitles, setExpandedTitles] = useState(() => new Set());
   const [page, setPage] = useState(1);
@@ -218,6 +218,7 @@ const TrackedPage = () => {
                               target="_blank"
                               rel="noreferrer"
                               className="font-semibold text-ink underline-offset-2 hover:underline dark:text-white"
+                              onClick={() => markChapterRead(entry.title, chapter.token)}
                             >
                               {titleContent}
                             </a>

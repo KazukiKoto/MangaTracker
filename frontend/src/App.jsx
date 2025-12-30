@@ -20,32 +20,6 @@ const deriveApiBase = () => {
 };
 
 const API_BASE = deriveApiBase();
-const READ_STORAGE_KEY = "manga-tracker:last-read";
-
-const loadReadChapters = () => {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const raw = window.localStorage.getItem(READ_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-};
-
-const persistReadChapters = (payload) => {
-  if (typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(READ_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    /* ignore storage errors */
-  }
-};
 
 const selectLatestSource = (match) => {
   if (!match || !Array.isArray(match.sources) || !match.sources.length) {
@@ -106,6 +80,73 @@ const buildChapterToken = (source) => {
     return null;
   }
   return buildChapterTokenFromParts(source.latest_chapter, source.latest_chapter_number);
+};
+
+const tokenToNumber = (token) => {
+  if (!token || typeof token !== "string") {
+    return null;
+  }
+  if (token.startsWith("num:")) {
+    const value = Number(token.slice(4));
+    return Number.isFinite(value) ? value : null;
+  }
+  return null;
+};
+
+const getLatestChapterNumber = (primaryChapter, source) => {
+  if (primaryChapter?.number != null) {
+    return primaryChapter.number;
+  }
+  if (primaryChapter?.label) {
+    const parsed = coerceChapterNumber(primaryChapter.label);
+    if (parsed != null) {
+      return parsed;
+    }
+  }
+  if (source?.latest_chapter_number != null) {
+    return source.latest_chapter_number;
+  }
+  if (source?.latest_chapter) {
+    const parsed = coerceChapterNumber(source.latest_chapter);
+    if (parsed != null) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const buildSyntheticChapterEntry = (seriesTitle, source, overrides = {}, number) => {
+  if (!source || number == null) {
+    return null;
+  }
+  const numeric = Number(number);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  const slug = slugifyTitle(seriesTitle);
+  const host = getSiteHost(source);
+  const handle = resolveSeriesHandle(host, overrides) || slug;
+  const sourceLink = typeof source.link === "string" ? source.link.trim() : "";
+  const baseContext = {
+    title: seriesTitle ?? "",
+    slug,
+    handle,
+    base_url: sourceLink,
+  };
+  const templateLink = applyTemplatePlaceholders(source.chapter_url_template, {
+    ...baseContext,
+    chapter: String(numeric),
+    chapter_label: String(numeric),
+    chapter_number: String(numeric),
+  });
+  const label = `Chapter ${numeric}`;
+  return {
+    label,
+    number: numeric,
+    link: templateLink || sourceLink || null,
+    token: buildChapterTokenFromParts(label, numeric),
+    detectedAt: null,
+  };
 };
 
 const slugifyTitle = (value) => {
@@ -308,7 +349,6 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [refreshingMatches, setRefreshingMatches] = useState(false);
   const [error, setError] = useState("");
-  const [readChapters, setReadChapters] = useState(() => loadReadChapters());
 
   const hydrate = useCallback(async () => {
     try {
@@ -332,10 +372,6 @@ function App() {
   useEffect(() => {
     hydrate();
   }, [hydrate]);
-
-  useEffect(() => {
-    persistReadChapters(readChapters);
-  }, [readChapters]);
 
   const refreshMatches = useCallback(async () => {
     try {
@@ -361,6 +397,20 @@ function App() {
       const key = record.title.trim().toLowerCase();
       if (key) {
         map.set(key, record);
+      }
+    });
+    return map;
+  }, [series]);
+
+  const readTokens = useMemo(() => {
+    const map = {};
+    series.forEach((record) => {
+      if (!record?.title) {
+        return;
+      }
+      const key = record.title.trim().toLowerCase();
+      if (key && record.last_read_token) {
+        map[key] = record.last_read_token;
       }
     });
     return map;
@@ -483,13 +533,42 @@ function App() {
       const chapterToken = primaryChapter?.token ?? buildChapterToken(latestSource);
       const chapterLabel = primaryChapter?.label ?? formatChapterLabel(latestSource);
       const key = match.title.trim().toLowerCase();
-      const lastReadToken = key ? readChapters[key] : null;
+      const lastReadToken = key ? readTokens[key] : null;
+      const lastReadNumber = tokenToNumber(lastReadToken);
+      const latestChapterNumber = getLatestChapterNumber(primaryChapter, latestSource);
+      const highestChapterNumber = latestChapterNumber != null ? Math.round(latestChapterNumber) : null;
+      const lastReadRounded = lastReadNumber != null ? Math.round(lastReadNumber) : null;
+      const numericUnreadDiff =
+        highestChapterNumber != null && lastReadRounded != null
+          ? Math.max(0, highestChapterNumber - lastReadRounded)
+          : null;
       let unreadChapters = deriveUnreadChapters(chapterEntries, lastReadToken);
       if (!unreadChapters.length && chapterToken && chapterToken !== lastReadToken && primaryChapter) {
         unreadChapters = [primaryChapter];
       }
+      if (
+        numericUnreadDiff &&
+        numericUnreadDiff > unreadChapters.length &&
+        latestSource &&
+        highestChapterNumber != null &&
+        lastReadRounded != null
+      ) {
+        const seenTokens = new Set(unreadChapters.map((entry) => entry.token).filter(Boolean));
+        let candidateNumber = highestChapterNumber;
+        while (unreadChapters.length < numericUnreadDiff && candidateNumber > lastReadRounded) {
+          const synthetic = buildSyntheticChapterEntry(match.title, latestSource, siteOverrides, candidateNumber);
+          if (synthetic?.token && !seenTokens.has(synthetic.token)) {
+            unreadChapters.push(synthetic);
+            seenTokens.add(synthetic.token);
+          }
+          candidateNumber -= 1;
+        }
+        unreadChapters.sort((a, b) => (b.number ?? 0) - (a.number ?? 0));
+      }
       const isUnread = unreadChapters.length > 0;
       const seriesLink = buildSeriesLink(match.title, latestSource, siteOverrides);
+      const unreadCount =
+        numericUnreadDiff != null ? Math.max(numericUnreadDiff, unreadChapters.length) : unreadChapters.length;
       return {
         match,
         title: match.title,
@@ -500,10 +579,10 @@ function App() {
         isUnread,
         chapters: chapterEntries,
         unreadChapters,
-        unreadCount: unreadChapters.length,
+        unreadCount,
       };
     });
-  }, [matches, readChapters, seriesLookup]);
+  }, [matches, readTokens, seriesLookup]);
 
   const unreadMatches = useMemo(() => {
     const unreadEntries = matchSummaries.filter((entry) => entry.unreadChapters.length && entry.chapterToken);
@@ -514,13 +593,12 @@ function App() {
     });
   }, [matchSummaries]);
 
-  const markChaptersRead = useCallback((entries) => {
-    if (!entries.length) {
-      return;
-    }
-    setReadChapters((prev) => {
-      const next = { ...prev };
-      let changed = false;
+  const markChaptersRead = useCallback(
+    async (entries) => {
+      if (!entries.length) {
+        return;
+      }
+      const pending = new Map();
       entries.forEach(({ title, token }) => {
         if (!title || !token) {
           return;
@@ -529,19 +607,41 @@ function App() {
         if (!key) {
           return;
         }
-        if (next[key] !== token) {
-          next[key] = token;
-          changed = true;
+        const record = seriesLookup.get(key);
+        if (!record) {
+          return;
         }
+        if (record.last_read_token === token) {
+          return;
+        }
+        pending.set(record.id, token);
       });
-      return changed ? next : prev;
-    });
-  }, []);
+      if (!pending.size) {
+        return;
+      }
+      try {
+        const updates = await Promise.all(
+          Array.from(pending.entries()).map(([seriesId, token]) =>
+            request(`/api/series/${seriesId}`, { method: "PUT", body: { last_read_token: token } })
+          )
+        );
+        setSeries((prev) => {
+          const replacements = new Map(updates.map((record) => [record.id, record]));
+          return prev.map((record) => replacements.get(record.id) ?? record);
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to update reading progress";
+        setError(message);
+        throw err;
+      }
+    },
+    [seriesLookup, setSeries, setError]
+  );
 
   const markChapterRead = useCallback(
     (title, token) => {
       if (!title || !token) return;
-      markChaptersRead([{ title, token }]);
+      markChaptersRead([{ title, token }]).catch((err) => console.error(err));
     },
     [markChaptersRead]
   );

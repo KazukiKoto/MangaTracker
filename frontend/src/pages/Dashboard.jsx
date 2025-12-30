@@ -35,6 +35,10 @@ const DashboardPage = () => {
   const [activeTab, setActiveTab] = useState("unread");
   const [expandedTitles, setExpandedTitles] = useState(() => new Set());
   const relativeNow = useRelativeNow();
+  const totalUnreadChapters = useMemo(
+    () => matchSummaries.reduce((sum, entry) => sum + (entry.unreadCount ?? 0), 0),
+    [matchSummaries]
+  );
 
   const visibleEntries = useMemo(
     () => (activeTab === "unread" ? unreadMatches : matchSummaries),
@@ -55,7 +59,14 @@ const DashboardPage = () => {
       (entry) => entry.isUnread && entry.chapterToken
     );
     if (!targets.length) return;
-    markChaptersRead(targets.map(({ title, chapterToken }) => ({ title, token: chapterToken })));
+    markChaptersRead(targets.map(({ title, chapterToken }) => ({ title, token: chapterToken }))).catch((err) =>
+      console.error(err)
+    );
+  };
+
+  const handleChapterOpen = (title, token) => {
+    if (!token) return;
+    markChapterRead(title, token);
   };
 
   const emptyCopy = activeTab === "unread"
@@ -94,7 +105,7 @@ const DashboardPage = () => {
           </div>
           <div className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/60">
             <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Unread chapters</p>
-            <p className="text-3xl font-semibold text-ink dark:text-white">{unreadMatches.length}</p>
+            <p className="text-3xl font-semibold text-ink dark:text-white">{totalUnreadChapters}</p>
           </div>
         </div>
       </Panel>
@@ -227,6 +238,7 @@ const DashboardPage = () => {
                               target="_blank"
                               rel="noreferrer"
                               className="font-semibold text-ink underline-offset-2 hover:underline dark:text-white"
+                              onClick={() => handleChapterOpen(entry.title, chapter.token)}
                             >
                               {titleContent}
                             </a>
