@@ -184,11 +184,12 @@ const buildChapterEntries = (seriesTitle, source, overrides = {}) => {
   const slug = slugifyTitle(seriesTitle);
   const host = getSiteHost(source);
   const handle = resolveSeriesHandle(host, overrides) || slug;
+  const sourceLink = typeof source.link === "string" ? source.link.trim() : "";
   const baseContext = {
     title: seriesTitle ?? "",
     slug,
     handle,
-    base_url: source.link ?? "",
+    base_url: sourceLink,
   };
   const rawEntries = Array.isArray(source.recent_chapters) && source.recent_chapters.length
     ? source.recent_chapters
@@ -223,10 +224,12 @@ const buildChapterEntries = (seriesTitle, source, overrides = {}) => {
       chapter_label: label ?? "",
       chapter_number: numericValue != null ? String(numericValue) : "",
     });
+    const rawLink = typeof item.link === "string" ? item.link.trim() : "";
+    const effectiveItemLink = rawLink && (!sourceLink || rawLink !== sourceLink) ? rawLink : "";
     entries.push({
       label: label ?? (numericValue != null ? `Chapter ${numericValue}` : "Unknown"),
       number: numericValue,
-      link: item.link || templateLink || source.link || null,
+      link: effectiveItemLink || templateLink || sourceLink || null,
       token,
       detectedAt: item.detected_at ?? null,
     });
@@ -303,6 +306,7 @@ function App() {
   const [series, setSeries] = useState([]);
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshingMatches, setRefreshingMatches] = useState(false);
   const [error, setError] = useState("");
   const [readChapters, setReadChapters] = useState(() => loadReadChapters());
 
@@ -335,6 +339,7 @@ function App() {
 
   const refreshMatches = useCallback(async () => {
     try {
+      setRefreshingMatches(true);
       setError("");
       const updatedMatches = await request("/api/matches");
       setMatches(updatedMatches);
@@ -342,6 +347,8 @@ function App() {
       const message = err instanceof Error ? err.message : "Unable to refresh matches";
       setError(message);
       throw err;
+    } finally {
+      setRefreshingMatches(false);
     }
   }, []);
 
@@ -526,7 +533,7 @@ function App() {
   const contextValue = useMemo(
     () => ({
       data: { websites, series, matches, matchSummaries, unreadMatches },
-      status: { loading, error },
+      status: { loading, error, refreshingMatches },
       actions: {
         hydrate,
         refreshMatches,
@@ -547,6 +554,7 @@ function App() {
       matchSummaries,
       unreadMatches,
       loading,
+      refreshingMatches,
       error,
       hydrate,
       refreshMatches,

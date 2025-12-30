@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import Panel from "../components/Panel";
 import { useTracker } from "../context/TrackerContext";
 import { formatDetectionAge } from "../utils/time";
+import useRelativeNow from "../hooks/useRelativeNow";
 
 const TAB_OPTIONS = [
   { id: "unread", label: "Unread" },
@@ -28,11 +29,12 @@ const ArrowToggleIcon = ({ expanded }) => (
 const DashboardPage = () => {
   const {
     data: { websites, series, matches, unreadMatches, matchSummaries },
-    status: { loading },
+    status: { loading, refreshingMatches },
     actions: { refreshMatches, markChapterRead, markChaptersRead },
   } = useTracker();
   const [activeTab, setActiveTab] = useState("unread");
   const [expandedTitles, setExpandedTitles] = useState(() => new Set());
+  const relativeNow = useRelativeNow();
 
   const visibleEntries = useMemo(
     () => (activeTab === "unread" ? unreadMatches : matchSummaries),
@@ -116,11 +118,21 @@ const DashboardPage = () => {
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:border-slate-500 dark:border-slate-600 dark:text-slate-200 dark:hover:border-slate-400"
+              className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:border-slate-500 disabled:opacity-60 dark:border-slate-600 dark:text-slate-200 dark:hover:border-slate-400"
               onClick={refresh}
-              disabled={loading}
+              disabled={loading || refreshingMatches}
             >
-              Refresh
+              {refreshingMatches ? (
+                <span className="flex items-center gap-2">
+                  <span
+                    className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent"
+                    aria-hidden="true"
+                  />
+                  Refreshing…
+                </span>
+              ) : (
+                "Refresh"
+              )}
             </button>
             <button
               className="rounded-full border border-glow/40 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-glow hover:border-glow dark:border-glow/70"
@@ -137,7 +149,13 @@ const DashboardPage = () => {
             Loading tracker data…
           </div>
         ) : visibleEntries.length ? (
-          <ul className="flex flex-col gap-3">
+          <>
+            {refreshingMatches && (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-white/60 px-4 py-2 text-center text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
+                Refreshing matches…
+              </div>
+            )}
+            <ul className="flex flex-col gap-3">
             {visibleEntries.map((entry) => {
               const detailChapters = entry.unreadChapters ?? [];
               const hasDetails = detailChapters.length > 0;
@@ -202,34 +220,36 @@ const DashboardPage = () => {
                         {detailChapters.map((chapter, index) => {
                           const key = chapter.token ?? `${chapter.label ?? "unknown"}-${index}`;
                           const href = chapter.link || entry.seriesLink;
+                          const titleContent = `Chapter ${chapter.label ?? "Unknown"}`;
+                          const titleNode = href ? (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-semibold text-ink underline-offset-2 hover:underline dark:text-white"
+                            >
+                              {titleContent}
+                            </a>
+                          ) : (
+                            <span className="font-semibold text-ink dark:text-white">{titleContent}</span>
+                          );
                           return (
                             <div
                               key={`${entry.title}-${key}`}
                               className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2 last:border-b-0 last:pb-0 dark:border-slate-700"
                             >
                               <div>
-                                <p className="font-semibold text-ink dark:text-white">
-                                  Chapter {chapter.label ?? "Unknown"}
-                                </p>
+                                {titleNode}
                                 {chapter.number != null && (
                                   <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
                                     {`#${chapter.number}`}
                                   </p>
                                 )}
                                 <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                  {formatDetectionAge(chapter.detectedAt)}
+                                  {formatDetectionAge(chapter.detectedAt, relativeNow)}
                                 </p>
                               </div>
-                              {href ? (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-[10px] font-semibold uppercase tracking-wide text-glow hover:underline"
-                                >
-                                  Open
-                                </a>
-                              ) : (
+                              {!href && (
                                 <span className="text-[10px] uppercase tracking-wide text-slate-400">No link</span>
                               )}
                             </div>
@@ -241,7 +261,8 @@ const DashboardPage = () => {
                 </li>
               );
             })}
-          </ul>
+            </ul>
+          </>
         ) : (
           <div className="rounded-xl border-2 border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
             {emptyCopy}

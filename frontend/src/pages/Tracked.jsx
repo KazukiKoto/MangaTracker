@@ -2,6 +2,7 @@ import Panel from "../components/Panel";
 import { useEffect, useMemo, useState } from "react";
 import { useTracker } from "../context/TrackerContext";
 import { formatDetectionAge } from "../utils/time";
+import useRelativeNow from "../hooks/useRelativeNow";
 
 const ArrowToggleIcon = ({ expanded }) => (
   <svg
@@ -26,11 +27,12 @@ const normalizeTitle = (value) => (value ? value.trim().toLowerCase() : "");
 const TrackedPage = () => {
   const {
     data: { websites, series, matchSummaries },
-    status: { loading },
+    status: { loading, refreshingMatches },
     actions: { refreshMatches },
   } = useTracker();
   const [expandedTitles, setExpandedTitles] = useState(() => new Set());
   const [page, setPage] = useState(1);
+  const relativeNow = useRelativeNow();
 
   const sortedMatches = useMemo(() => {
     return [...matchSummaries].sort((a, b) => {
@@ -125,11 +127,21 @@ const TrackedPage = () => {
               </div>
             )}
             <button
-              className="text-xs font-semibold uppercase tracking-wide text-glow"
+              className="text-xs font-semibold uppercase tracking-wide text-glow disabled:opacity-60"
               onClick={handleRefresh}
-              disabled={loading}
+              disabled={loading || refreshingMatches}
             >
-              Refresh
+              {refreshingMatches ? (
+                <span className="flex items-center gap-2">
+                  <span
+                    className="h-3 w-3 animate-spin rounded-full border border-current border-t-transparent"
+                    aria-hidden="true"
+                  />
+                  Refreshing…
+                </span>
+              ) : (
+                "Refresh"
+              )}
             </button>
           </div>
         </div>
@@ -199,34 +211,36 @@ const TrackedPage = () => {
                         {detailChapters.map((chapter, index) => {
                           const key = chapter.token ?? `${chapter.label ?? "unknown"}-${index}`;
                           const href = chapter.link || entry.seriesLink;
+                          const titleContent = `Chapter ${chapter.label ?? "Unknown"}`;
+                          const titleNode = href ? (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-semibold text-ink underline-offset-2 hover:underline dark:text-white"
+                            >
+                              {titleContent}
+                            </a>
+                          ) : (
+                            <span className="font-semibold text-ink dark:text-white">{titleContent}</span>
+                          );
                           return (
                             <div
                               key={`${entry.title}-${key}`}
                               className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2 last:border-b-0 last:pb-0 dark:border-slate-700"
                             >
                               <div>
-                                <p className="font-semibold text-ink dark:text-white">
-                                  Chapter {chapter.label ?? "Unknown"}
-                                </p>
+                                {titleNode}
                                 {chapter.number != null && (
                                   <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
                                     {`#${chapter.number}`}
                                   </p>
                                 )}
                                 <p className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                  {formatDetectionAge(chapter.detectedAt)}
+                                  {formatDetectionAge(chapter.detectedAt, relativeNow)}
                                 </p>
                               </div>
-                              {href ? (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-[10px] font-semibold uppercase tracking-wide text-glow hover:underline"
-                                >
-                                  Open
-                                </a>
-                              ) : (
+                              {!href && (
                                 <span className="text-[10px] uppercase tracking-wide text-slate-400">No link</span>
                               )}
                             </div>

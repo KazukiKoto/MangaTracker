@@ -1,6 +1,7 @@
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
-const WEEK_MS = 7 * 24 * HOUR_MS;
+const DAY_MS = 24 * HOUR_MS;
+const WEEK_MS = 7 * DAY_MS;
 
 const coerceDate = (value) => {
   if (!value) {
@@ -13,27 +14,31 @@ const coerceDate = (value) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
-export const formatDetectionAge = (input) => {
+export const formatDetectionAge = (input, nowMs = Date.now()) => {
   const detected = coerceDate(input);
   if (!detected) {
-    return "Detected recently";
+    return "Moments ago";
   }
-  const now = Date.now();
-  let diff = now - detected.getTime();
+  const referenceNow = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const diff = Math.max(0, referenceNow - detected.getTime());
   if (diff < MINUTE_MS) {
-    return "Detected 1 min ago";
+    return "Just now";
   }
   const minutes = Math.max(1, Math.floor(diff / MINUTE_MS));
   if (minutes < 60) {
-    return `Detected ${minutes} min ago`;
+    return `${minutes} min${minutes === 1 ? "" : "s"} ago`;
   }
   const hours = Math.max(1, Math.floor(diff / HOUR_MS));
   if (hours < 24) {
-    return `Detected ${hours} hr${hours === 1 ? "" : "s"} ago`;
+    return `${hours} hr${hours === 1 ? "" : "s"} ago`;
+  }
+  const days = Math.max(1, Math.floor(diff / DAY_MS));
+  if (days < 7) {
+    return `${days} day${days === 1 ? "" : "s"} ago`;
   }
   const weeks = Math.max(1, Math.floor(diff / WEEK_MS));
   if (weeks <= 10) {
-    return `Detected ${weeks} wk${weeks === 1 ? "" : "s"} ago`;
+    return `${weeks} wk${weeks === 1 ? "" : "s"} ago`;
   }
-  return "Detected 10+ wks ago";
+  return "10+ wks ago";
 };
