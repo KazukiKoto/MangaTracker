@@ -69,17 +69,17 @@ const WebsitesPage = () => {
 
       <Panel title="Tracked Websites" copy="Existing sources currently being scanned">
         {websites.length === 0 ? (
-          <p className="text-sm text-slate-500">No websites yet. Add one above to get started.</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">No websites yet. Add one above to get started.</p>
         ) : (
           <ul className="flex flex-col gap-3">
             {websites.map((site) => (
               <li
                 key={site.id}
-                className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-3"
+                className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70"
               >
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <p className="text-base font-semibold text-ink">{site.label}</p>
+                    <p className="text-base font-semibold text-ink dark:text-white">{site.label}</p>
                     <a
                       href={site.url}
                       target="_blank"
@@ -88,17 +88,17 @@ const WebsitesPage = () => {
                     >
                       {site.url}
                     </a>
-                    <p className="text-xs text-slate-500">{describePagination(site.pagination)}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{describePagination(site.pagination)}</p>
                   </div>
                   <div className="flex gap-2">
                     <button
-                      className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:border-slate-500"
+                      className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:border-slate-500 dark:border-slate-600 dark:text-slate-200 dark:hover:border-slate-400"
                       onClick={() => setEditingId(site.id)}
                     >
                       Edit
                     </button>
                     <button
-                      className="rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-rose-600 hover:border-rose-400"
+                      className="rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-rose-600 hover:border-rose-400 dark:border-rose-500/60 dark:text-rose-300"
                       onClick={() => handleDelete(site.id)}
                     >
                       Remove

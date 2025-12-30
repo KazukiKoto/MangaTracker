@@ -13,14 +13,14 @@ const SeriesCard = ({ match }) => {
     : null;
 
   return (
-    <li className="rounded-xl border border-slate-100 bg-slate-50/70 px-5 py-4">
+    <li className="rounded-xl border border-slate-100 bg-slate-50/70 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/60">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-lg font-semibold text-ink">{match.title}</p>
-          <p className="text-sm text-slate-500">
+          <p className="text-lg font-semibold text-ink dark:text-white">{match.title}</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
             Most recent chapter: {mostRecentChapter ?? "Unknown"}
           </p>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
             {orderedSources.length} source{orderedSources.length === 1 ? "" : "s"}
           </p>
         </div>
@@ -35,7 +35,7 @@ const SeriesCard = ({ match }) => {
           return (
             <li
               key={`${match.title}-${source.site}-${source.link ?? "nolink"}-${chapterDisplay}`}
-              className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/70 bg-white/80 px-4 py-3"
+              className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-white/70 bg-white/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/70"
             >
               <div>
                 {source.link ? (
@@ -43,14 +43,14 @@ const SeriesCard = ({ match }) => {
                     href={source.link}
                     target="_blank"
                     rel="noreferrer"
-                    className="font-semibold text-ink hover:text-glow"
+                    className="font-semibold text-ink hover:text-glow dark:text-white"
                   >
                     {source.site}
                   </a>
                 ) : (
-                  <span className="font-semibold text-ink">{source.site}</span>
+                  <span className="font-semibold text-ink dark:text-white">{source.site}</span>
                 )}
-                <p className="text-xs text-slate-500">Latest chapter: {chapterDisplay}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Latest chapter: {chapterDisplay}</p>
               </div>
               {source.link && (
                 <a

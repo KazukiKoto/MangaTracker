@@ -62,6 +62,27 @@ def write_json_records(path: Path, payload: List[Dict]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
 
+
+def normalize_optional_str(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    candidate = value.strip()
+    return candidate or None
+
+
+def normalize_site_overrides(overrides: Optional[Dict[str, str]]) -> Dict[str, str]:
+    if not overrides:
+        return {}
+    result: Dict[str, str] = {}
+    for key, value in overrides.items():
+        if key is None or value is None:
+            continue
+        host = key.strip().lower()
+        handle = value.strip()
+        if host and handle:
+            result[host] = handle
+    return result
+
 SCAN_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 MAX_RESPONSE_BYTES = 1_000_000
 USER_AGENT = "MangaTrackerBot/0.1 (+https://github.com/)"
@@ -75,6 +96,8 @@ class WebsiteCreate(BaseModel):
     label: str
     url: HttpUrl
     pagination: Optional["PaginationConfig"] = None
+    series_url_template: Optional[str] = None
+    chapter_url_template: Optional[str] = None
 
 
 class Website(WebsiteCreate):
@@ -85,11 +108,14 @@ class WebsiteUpdate(BaseModel):
     label: Optional[str] = None
     url: Optional[HttpUrl] = None
     pagination: Optional[PaginationConfig | None] = None
+    series_url_template: Optional[str | None] = None
+    chapter_url_template: Optional[str | None] = None
 
 
 class SeriesCreate(BaseModel):
     title: str
     aliases: List[str] = Field(default_factory=list)
+    site_overrides: Dict[str, str] = Field(default_factory=dict)
 
 
 class Series(SeriesCreate):
@@ -99,6 +125,14 @@ class Series(SeriesCreate):
 class SeriesUpdate(BaseModel):
     title: Optional[str] = None
     aliases: Optional[List[str]] = None
+    site_overrides: Optional[Dict[str, str]] = None
+
+
+class ChapterListing(BaseModel):
+    label: Optional[str] = None
+    number: Optional[float] = None
+    link: Optional[str] = None
+    detected_at: Optional[datetime] = None
 
 
 class SourceHit(BaseModel):
@@ -106,6 +140,12 @@ class SourceHit(BaseModel):
     link: Optional[str] = None
     latest_chapter: Optional[str] = None
     latest_chapter_number: Optional[float] = None
+    recent_chapters: List[ChapterListing] = Field(default_factory=list)
+    series_url_template: Optional[str] = None
+    chapter_url_template: Optional[str] = None
+    site_host: Optional[str] = None
+    series_url_template: Optional[str] = None
+    chapter_url_template: Optional[str] = None
 
 
 class Match(BaseModel):
@@ -137,7 +177,14 @@ class InMemoryStore:
         for existing in self.websites.values():
             if normalize_host(str(existing.url)) == normalized:
                 raise HTTPException(status_code=409, detail="Website already tracked")
-        site = Website(id=str(uuid4()), **payload.dict())
+        site = Website(
+            id=str(uuid4()),
+            label=payload.label.strip(),
+            url=payload.url,
+            pagination=payload.pagination,
+            series_url_template=normalize_optional_str(payload.series_url_template),
+            chapter_url_template=normalize_optional_str(payload.chapter_url_template),
+        )
         self.websites[site.id] = site
         self._persist_websites()
         return site
@@ -171,6 +218,14 @@ class InMemoryStore:
         if "pagination" in update_data:
             # allow clearing pagination by passing null
             update_data["pagination"] = update_data["pagination"]
+        if "series_url_template" in update_data:
+            update_data["series_url_template"] = normalize_optional_str(
+                update_data["series_url_template"]
+            )
+        if "chapter_url_template" in update_data:
+            update_data["chapter_url_template"] = normalize_optional_str(
+                update_data["chapter_url_template"]
+            )
 
         updated = site.model_copy(update=update_data)
         self.websites[site_id] = updated
@@ -187,7 +242,12 @@ class InMemoryStore:
             existing_tokens = series_tokens(existing.title, getattr(existing, "aliases", []) or [])
             if candidate_tokens & existing_tokens:
                 raise HTTPException(status_code=409, detail="Series already tracked")
-        record = Series(id=str(uuid4()), title=title, aliases=aliases)
+        record = Series(
+            id=str(uuid4()),
+            title=title,
+            aliases=aliases,
+            site_overrides=normalize_site_overrides(payload.site_overrides),
+        )
         self.series[record.id] = record
         self._persist_series()
         return record
@@ -214,6 +274,9 @@ class InMemoryStore:
         if "aliases" in update_data:
             candidate_aliases = normalize_aliases(update_data["aliases"])
             update_data["aliases"] = candidate_aliases
+
+        if "site_overrides" in update_data:
+            update_data["site_overrides"] = normalize_site_overrides(update_data["site_overrides"])
 
         candidate_tokens = series_tokens(candidate_title, candidate_aliases)
         for existing_id, existing in self.series.items():
@@ -440,19 +503,27 @@ def matches_from_cache(
         if soup is None:
             continue
         source_label = site.label or normalize_host(str(site.url))
+        series_template = site.series_url_template
+        chapter_template = site.chapter_url_template
+        site_host = urlparse(str(site.url)).netloc.lower()
         candidates = extract_candidate_entries(soup, str(site.url))
+        detected_at = store.site_cache_meta.get(site.id)
         for term in series_terms:
             search_label = term["search"]
             display_title = term["display"]
-            hit = locate_series_hit(candidates, search_label, str(site.url))
+            hit = locate_series_hit(candidates, search_label, str(site.url), detected_at)
             if not hit:
                 continue
-            link, chapter_label, chapter_number = hit
+            link, chapter_label, chapter_number, chapter_list = hit
             match_index.setdefault(display_title, {})[source_label] = SourceHit(
                 site=source_label,
                 link=link or str(site.url),
                 latest_chapter=chapter_label,
                 latest_chapter_number=chapter_number,
+                recent_chapters=chapter_list,
+                series_url_template=series_template,
+                chapter_url_template=chapter_template,
+                site_host=site_host,
             )
     return (serialize_matches(match_index), missing_cache)
 
@@ -591,13 +662,18 @@ def extract_candidate_entries(soup: BeautifulSoup, base_url: str) -> List[Candid
 
 
 def locate_series_hit(
-    candidates: List[CandidateEntry], title: str, site_url: str
-) -> Optional[Tuple[Optional[str], Optional[str], Optional[float]]]:
+    candidates: List[CandidateEntry],
+    title: str,
+    site_url: str,
+    detected_at: Optional[datetime] = None,
+) -> Optional[Tuple[Optional[str], Optional[str], Optional[float], List[ChapterListing]]]:
     normalized_title = normalize_text(title)
     if not normalized_title:
         return None
     title_tokens = normalized_title.split()
     best: Tuple[float, Optional[str], Optional[str], Optional[float]] | None = None
+    chapter_entries: List[ChapterListing] = []
+    seen_chapter_keys: set[str] = set()
     for entry in candidates:
         candidate_norm = entry["norm"]
         tokens = entry["tokens"]
@@ -608,11 +684,67 @@ def locate_series_hit(
             entry["text"], entry.get("context")
         )
         link = entry["link"] or site_url
+        if chapter_label:
+            key = build_chapter_signature(chapter_label, chapter_number)
+            if key and key not in seen_chapter_keys:
+                seen_chapter_keys.add(key)
+                chapter_entries.append(
+                    ChapterListing(
+                        label=chapter_label,
+                        number=chapter_number,
+                        link=link,
+                        detected_at=detected_at,
+                    )
+                )
         if best is None or ratio > best[0]:
             best = (ratio, link, chapter_label, chapter_number)
     if best is None:
         return None
-    return (best[1], best[2], best[3])
+
+    ordered = sort_chapter_entries(chapter_entries)
+    if best[2]:
+        signature = build_chapter_signature(best[2], best[3])
+        if signature and signature not in {build_chapter_signature(item.label, item.number) for item in ordered}:
+            ordered.insert(
+                0,
+                ChapterListing(
+                    label=best[2],
+                    number=best[3],
+                    link=best[1],
+                    detected_at=detected_at,
+                ),
+            )
+    if not ordered:
+        ordered = [
+            ChapterListing(
+                label=best[2],
+                number=best[3],
+                link=best[1],
+                detected_at=detected_at,
+            )
+        ]
+    return (best[1], best[2], best[3], ordered[:5])
+
+
+def build_chapter_signature(label: Optional[str], number: Optional[float]) -> Optional[str]:
+    if number is not None:
+        return f"num:{number}"
+    if label:
+        return f"label:{label.strip().casefold()}"
+    return None
+
+
+def sort_chapter_entries(entries: List[ChapterListing]) -> List[ChapterListing]:
+    if not entries:
+        return []
+    return sorted(
+        entries,
+        key=lambda item: (
+            0 if item.number is not None else 1,
+            -(item.number if item.number is not None else 0.0),
+            item.label or "",
+        ),
+    )
 
 
 def normalize_text(value: str) -> str:
@@ -756,6 +888,10 @@ def collect_mock_matches(
                 link=str(site.url),
                 latest_chapter=None,
                 latest_chapter_number=None,
+                recent_chapters=[],
+                series_url_template=site.series_url_template,
+                chapter_url_template=site.chapter_url_template,
+                site_host=urlparse(str(site.url)).netloc.lower(),
             )
     return serialize_matches(match_index)
 

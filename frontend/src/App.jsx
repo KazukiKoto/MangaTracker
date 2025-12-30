@@ -79,17 +79,200 @@ const formatChapterLabel = (source) => {
   return "Unknown";
 };
 
+const coerceChapterNumber = (value) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  const parsed = Number(String(value).trim());
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const buildChapterTokenFromParts = (label, number) => {
+  const numericValue = coerceChapterNumber(number);
+  if (numericValue != null) {
+    return `num:${numericValue}`;
+  }
+  if (label) {
+    return `label:${String(label).trim().toLowerCase()}`;
+  }
+  return null;
+};
+
 const buildChapterToken = (source) => {
   if (!source) {
     return null;
   }
-  if (source.latest_chapter_number != null) {
-    return `num:${source.latest_chapter_number}`;
+  return buildChapterTokenFromParts(source.latest_chapter, source.latest_chapter_number);
+};
+
+const slugifyTitle = (value) => {
+  if (!value) {
+    return "";
   }
-  if (source.latest_chapter) {
-    return `label:${source.latest_chapter.toLowerCase()}`;
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+};
+
+const applyTemplatePlaceholders = (template, replacements = {}) => {
+  if (!template) {
+    return null;
   }
-  return null;
+  let output = template;
+  Object.entries(replacements).forEach(([key, rawValue]) => {
+    const safeValue = rawValue ?? "";
+    const pattern = new RegExp(`\\{${key}\\}`, "gi");
+    output = output.replace(pattern, safeValue);
+  });
+  const trimmed = output.trim();
+  return trimmed || null;
+};
+
+const getSiteHost = (source) => {
+  if (!source) {
+    return "";
+  }
+  if (source.site_host) {
+    return source.site_host;
+  }
+  if (source.link) {
+    try {
+      return new URL(source.link).host.toLowerCase();
+    } catch {
+      return "";
+    }
+  }
+  return "";
+};
+
+const resolveSeriesHandle = (host, overrides = {}) => {
+  if (!host || !overrides) {
+    return "";
+  }
+  return overrides[host] ?? "";
+};
+
+const buildSeriesLink = (seriesTitle, source, overrides = {}) => {
+  if (!source) {
+    return null;
+  }
+  const slug = slugifyTitle(seriesTitle);
+  const host = getSiteHost(source);
+  const handle = resolveSeriesHandle(host, overrides) || slug;
+  const context = {
+    title: seriesTitle ?? "",
+    slug,
+    handle,
+    base_url: source.link ?? "",
+  };
+  const templated = applyTemplatePlaceholders(source.series_url_template, context);
+  if (templated) {
+    return templated;
+  }
+  return source.link || null;
+};
+
+const buildChapterEntries = (seriesTitle, source, overrides = {}) => {
+  if (!source) {
+    return [];
+  }
+  const slug = slugifyTitle(seriesTitle);
+  const host = getSiteHost(source);
+  const handle = resolveSeriesHandle(host, overrides) || slug;
+  const baseContext = {
+    title: seriesTitle ?? "",
+    slug,
+    handle,
+    base_url: source.link ?? "",
+  };
+  const rawEntries = Array.isArray(source.recent_chapters) && source.recent_chapters.length
+    ? source.recent_chapters
+    : [
+        {
+          label: source.latest_chapter,
+          number: source.latest_chapter_number,
+          link: source.link,
+        },
+      ];
+  const seen = new Set();
+  const entries = [];
+  rawEntries.forEach((item) => {
+    if (!item) {
+      return;
+    }
+    const numericValue = coerceChapterNumber(item.number ?? item.label);
+    const label = item.label ?? (numericValue != null ? String(numericValue) : null);
+    if (!label && numericValue == null) {
+      return;
+    }
+    const token = buildChapterTokenFromParts(label, numericValue);
+    if (token && seen.has(token)) {
+      return;
+    }
+    if (token) {
+      seen.add(token);
+    }
+    const templateLink = applyTemplatePlaceholders(source.chapter_url_template, {
+      ...baseContext,
+      chapter: numericValue != null ? String(numericValue) : label ?? "",
+      chapter_label: label ?? "",
+      chapter_number: numericValue != null ? String(numericValue) : "",
+    });
+    entries.push({
+      label: label ?? (numericValue != null ? `Chapter ${numericValue}` : "Unknown"),
+      number: numericValue,
+      link: item.link || templateLink || source.link || null,
+      token,
+      detectedAt: item.detected_at ?? null,
+    });
+  });
+  return entries;
+};
+
+const getDetectionTimestamp = (value) => {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const entryMostRecentTimestamp = (entry) => {
+  const headChapter = entry?.unreadChapters?.[0];
+  if (headChapter) {
+    return getDetectionTimestamp(headChapter.detectedAt);
+  }
+  if (entry?.chapters?.length) {
+    return getDetectionTimestamp(entry.chapters[0].detectedAt);
+  }
+  return 0;
+};
+
+const deriveUnreadChapters = (entries, lastReadToken) => {
+  if (!entries.length) {
+    return [];
+  }
+  if (!lastReadToken) {
+    return entries
+      .filter((entry) => entry.token)
+      .sort((a, b) => getDetectionTimestamp(b.detectedAt) - getDetectionTimestamp(a.detectedAt));
+  }
+  const unread = [];
+  for (const entry of entries) {
+    if (!entry.token) {
+      continue;
+    }
+    if (entry.token === lastReadToken) {
+      break;
+    }
+    unread.push(entry);
+  }
+  return unread.sort((a, b) => getDetectionTimestamp(b.detectedAt) - getDetectionTimestamp(a.detectedAt));
 };
 
 const request = async (path, options = {}) => {
@@ -161,6 +344,20 @@ function App() {
       throw err;
     }
   }, []);
+
+  const seriesLookup = useMemo(() => {
+    const map = new Map();
+    series.forEach((record) => {
+      if (!record?.title) {
+        return;
+      }
+      const key = record.title.trim().toLowerCase();
+      if (key) {
+        map.set(key, record);
+      }
+    });
+    return map;
+  }, [series]);
 
   const addSite = useCallback(
     async (payload) => {
@@ -255,26 +452,44 @@ function App() {
   const matchSummaries = useMemo(() => {
     return matches.map((match) => {
       const latestSource = selectLatestSource(match);
-      const chapterToken = buildChapterToken(latestSource);
-      const chapterLabel = formatChapterLabel(latestSource);
+      const normalizedTitle = match.title.trim().toLowerCase();
+      const seriesRecord = seriesLookup.get(normalizedTitle);
+      const siteOverrides = seriesRecord?.site_overrides ?? {};
+      const chapterEntries = buildChapterEntries(match.title, latestSource, siteOverrides);
+      const primaryChapter = chapterEntries[0] ?? null;
+      const chapterToken = primaryChapter?.token ?? buildChapterToken(latestSource);
+      const chapterLabel = primaryChapter?.label ?? formatChapterLabel(latestSource);
       const key = match.title.trim().toLowerCase();
       const lastReadToken = key ? readChapters[key] : null;
-      const isUnread = Boolean(chapterToken && chapterToken !== lastReadToken);
+      let unreadChapters = deriveUnreadChapters(chapterEntries, lastReadToken);
+      if (!unreadChapters.length && chapterToken && chapterToken !== lastReadToken && primaryChapter) {
+        unreadChapters = [primaryChapter];
+      }
+      const isUnread = unreadChapters.length > 0;
+      const seriesLink = buildSeriesLink(match.title, latestSource, siteOverrides);
       return {
         match,
         title: match.title,
         latestSource,
+        seriesLink,
         chapterLabel,
         chapterToken,
         isUnread,
+        chapters: chapterEntries,
+        unreadChapters,
+        unreadCount: unreadChapters.length,
       };
     });
-  }, [matches, readChapters]);
+  }, [matches, readChapters, seriesLookup]);
 
-  const unreadMatches = useMemo(
-    () => matchSummaries.filter((entry) => entry.isUnread && entry.chapterToken),
-    [matchSummaries]
-  );
+  const unreadMatches = useMemo(() => {
+    const unreadEntries = matchSummaries.filter((entry) => entry.unreadChapters.length && entry.chapterToken);
+    return unreadEntries.sort((a, b) => {
+      const latestA = entryMostRecentTimestamp(a);
+      const latestB = entryMostRecentTimestamp(b);
+      return latestB - latestA;
+    });
+  }, [matchSummaries]);
 
   const markChaptersRead = useCallback((entries) => {
     if (!entries.length) {
