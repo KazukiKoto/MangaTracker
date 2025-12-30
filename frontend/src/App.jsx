@@ -411,6 +411,22 @@ function App() {
     [hydrate]
   );
 
+  const reauthenticateSite = useCallback(
+    async (siteId, options = {}) => {
+      try {
+        setError("");
+        const response = await request(`/api/sites/${siteId}/reauth`, { method: "POST", body: options });
+        await hydrate();
+        return response;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to refresh authentication";
+        setError(message);
+        throw err;
+      }
+    },
+    [hydrate]
+  );
+
   const addSeries = useCallback(
     async (payload) => {
       try {
@@ -540,6 +556,7 @@ function App() {
         addSite,
         updateSite,
         removeSite,
+        reauthenticateSite,
         addSeries,
         updateSeries,
         removeSeries,
@@ -561,6 +578,7 @@ function App() {
       addSite,
       updateSite,
       removeSite,
+      reauthenticateSite,
       addSeries,
       updateSeries,
       removeSeries,

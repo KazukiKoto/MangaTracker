@@ -62,8 +62,8 @@ const TrackedPage = () => {
   const rangeEnd = totalMatches ? Math.min(sliceStart + visibleMatches.length, totalMatches) : 0;
   const showPagination = totalMatches > PAGE_SIZE;
   const rangeCopy = totalMatches
-    ? `Sorted A to Z • Showing ${rangeStart}-${rangeEnd} of ${totalMatches}`
-    : "Sorted A to Z";
+    ? `Showing ${rangeStart}-${rangeEnd} of ${totalMatches}`
+    : "";
 
   const goToPrevious = () => setPage((prev) => Math.max(1, prev - 1));
   const goToNext = () => setPage((prev) => Math.min(totalPages, prev + 1));

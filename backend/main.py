@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import subprocess
 from contextlib import suppress
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Literal
+import time
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Literal, Set
 from uuid import uuid4
 from difflib import SequenceMatcher
 
@@ -19,6 +22,11 @@ import httpx
 from pydantic import BaseModel, Field, HttpUrl, ValidationError
 from urllib.parse import urljoin, urlparse, urlunparse, urlencode, parse_qs
 from bs4 import BeautifulSoup
+
+try:
+    import browser_cookie3
+except ImportError:  # pragma: no cover - handled at runtime
+    browser_cookie3 = None
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title="Manga Tracker API", version="0.1.0")
@@ -83,6 +91,115 @@ def normalize_site_overrides(overrides: Optional[Dict[str, str]]) -> Dict[str, s
             result[host] = handle
     return result
 
+
+def site_to_public(site: Website) -> WebsitePublic:
+    return WebsitePublic(
+        id=site.id,
+        label=site.label,
+        url=site.url,
+        pagination=site.pagination,
+        series_url_template=site.series_url_template,
+        chapter_url_template=site.chapter_url_template,
+        last_reauth_at=site.last_reauth_at,
+    )
+
+
+def _domain_matches(cookie_domain: str, host: str) -> bool:
+    if not cookie_domain or not host:
+        return False
+    cdomain = cookie_domain.lstrip(".").lower()
+    host = host.lstrip(".").lower()
+    return host == cdomain or host.endswith(f".{cdomain}") or cdomain.endswith(f".{host}")
+
+
+def collect_browser_cookies(host: str, include_names: Optional[Set[str]] = None) -> List[StoredCookie]:
+    if not host or browser_cookie3 is None:
+        return []
+    include = {name.lower() for name in include_names} if include_names else None
+    try:
+        jar = browser_cookie3.load(domain_name=host)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Unable to load browser cookies for %s: %s", host, exc)
+        return []
+    results: List[StoredCookie] = []
+    for cookie in jar:
+        name = getattr(cookie, "name", "")
+        if not name:
+            continue
+        if include and name.lower() not in include:
+            continue
+        domain = getattr(cookie, "domain", "")
+        if not _domain_matches(domain, host):
+            continue
+        value = getattr(cookie, "value", None)
+        if value is None:
+            continue
+        results.append(
+            StoredCookie(
+                name=name,
+                value=value,
+                domain=domain,
+                path=getattr(cookie, "path", None) or "/",
+                expires=getattr(cookie, "expires", None),
+                secure=bool(getattr(cookie, "secure", False)),
+            )
+        )
+    return results
+
+
+def site_cookie_values(site: Website) -> Dict[str, str]:
+    cookies: Dict[str, str] = {}
+    for entry in getattr(site, "auth_cookies", []) or []:
+        if isinstance(entry, dict):
+            name = entry.get("name")
+            value = entry.get("value")
+        else:
+            name = getattr(entry, "name", None)
+            value = getattr(entry, "value", None)
+        if not name or value is None:
+            continue
+        cookies[name] = value
+    return cookies
+
+
+def ensure_cookie_capture_ready() -> bool:
+    if browser_cookie3 is None:
+        return False
+    if os.name != "posix":
+        return True
+    if os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        return True
+    try:
+        output = subprocess.check_output(["dbus-launch"], text=True)
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        logger.warning("dbus-launch unavailable, cannot capture browser cookies: %s", exc)
+        return False
+    for line in output.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key and value:
+            os.environ[key.strip()] = value.strip()
+    return bool(os.environ.get("DBUS_SESSION_BUS_ADDRESS"))
+
+
+def build_manual_cookies(host: str, entries: Dict[str, str]) -> List[StoredCookie]:
+    domain = host if host.startswith(".") else f".{host}"
+    cookies: List[StoredCookie] = []
+    for name, value in entries.items():
+        if not name or value is None:
+            continue
+        cookies.append(
+            StoredCookie(
+                name=name.strip(),
+                value=str(value).strip(),
+                domain=domain,
+                path="/",
+                secure=True,
+            )
+        )
+    return cookies
+
 SCAN_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 MAX_RESPONSE_BYTES = 1_000_000
 USER_AGENT = "MangaTrackerBot/0.1 (+https://github.com/)"
@@ -100,8 +217,19 @@ class WebsiteCreate(BaseModel):
     chapter_url_template: Optional[str] = None
 
 
+class StoredCookie(BaseModel):
+    name: str
+    value: str
+    domain: Optional[str] = None
+    path: Optional[str] = "/"
+    expires: Optional[float] = None
+    secure: bool = False
+
+
 class Website(WebsiteCreate):
     id: str
+    auth_cookies: List[StoredCookie] = Field(default_factory=list)
+    last_reauth_at: Optional[datetime] = None
 
 
 class WebsiteUpdate(BaseModel):
@@ -110,6 +238,23 @@ class WebsiteUpdate(BaseModel):
     pagination: Optional[PaginationConfig | None] = None
     series_url_template: Optional[str | None] = None
     chapter_url_template: Optional[str | None] = None
+    auth_cookies: Optional[List[StoredCookie]] = None
+
+
+class WebsitePublic(WebsiteCreate):
+    id: str
+    last_reauth_at: Optional[datetime] = None
+
+
+class ReauthRequest(BaseModel):
+    wait_seconds: int = 45
+    include_names: List[str] = Field(default_factory=lambda: ["cf_clearance", "__cf_bm"])
+    manual_cookies: Optional[Dict[str, str]] = None
+
+
+class ReauthResponse(BaseModel):
+    cookies_found: int
+    last_reauth_at: datetime
 
 
 class SeriesCreate(BaseModel):
@@ -228,6 +373,16 @@ class InMemoryStore:
             )
 
         updated = site.model_copy(update=update_data)
+        self.websites[site_id] = updated
+        self._persist_websites()
+        return updated
+
+    def update_site_cookies(self, site_id: str, cookies: List[StoredCookie]) -> Website:
+        site = self.websites.get(site_id)
+        if site is None:
+            raise HTTPException(status_code=404, detail="Website not found")
+        timestamp = datetime.now(timezone.utc)
+        updated = site.model_copy(update={"auth_cookies": cookies, "last_reauth_at": timestamp})
         self.websites[site_id] = updated
         self._persist_websites()
         return updated
@@ -381,23 +536,69 @@ def healthcheck() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/sites", response_model=List[Website])
-def list_sites() -> List[Website]:
-    return list(store.websites.values())
+@app.get("/api/sites", response_model=List[WebsitePublic])
+def list_sites() -> List[WebsitePublic]:
+    return [site_to_public(site) for site in store.websites.values()]
 
 
-@app.post("/api/sites", response_model=Website, status_code=201)
-async def create_site(payload: WebsiteCreate) -> Website:
+@app.post("/api/sites", response_model=WebsitePublic, status_code=201)
+async def create_site(payload: WebsiteCreate) -> WebsitePublic:
     site = store.add_site(payload)
     asyncio.create_task(refresh_site_cache([site]))
-    return site
+    return site_to_public(site)
 
 
-@app.put("/api/sites/{site_id}", response_model=Website)
-async def update_site(site_id: str, payload: WebsiteUpdate) -> Website:
+@app.put("/api/sites/{site_id}", response_model=WebsitePublic)
+async def update_site(site_id: str, payload: WebsiteUpdate) -> WebsitePublic:
     site = store.update_site(site_id, payload)
     asyncio.create_task(refresh_site_cache([site]))
-    return site
+    return site_to_public(site)
+
+
+@app.post("/api/sites/{site_id}/reauth", response_model=ReauthResponse)
+async def reauthenticate_site(site_id: str, payload: ReauthRequest = ReauthRequest()) -> ReauthResponse:
+    site = store.websites.get(site_id)
+    if site is None:
+        raise HTTPException(status_code=404, detail="Website not found")
+    host = normalize_host(str(site.url))
+    if not host:
+        raise HTTPException(status_code=400, detail="Unable to determine host for website")
+    manual_entries = {k: v for k, v in (payload.manual_cookies or {}).items() if v}
+    if manual_entries:
+        cookies = build_manual_cookies(host, manual_entries)
+        if not cookies:
+            raise HTTPException(status_code=400, detail="No valid cookie values supplied")
+        updated = store.update_site_cookies(site_id, cookies)
+        return ReauthResponse(cookies_found=len(cookies), last_reauth_at=updated.last_reauth_at)
+    if browser_cookie3 is None:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Automatic capture unavailable (missing browser_cookie3). Provide cookie values manually.",
+            ),
+        )
+    if not ensure_cookie_capture_ready():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Automatic capture unavailable (no DBus session). Install dbus-launch / run inside a desktop session, "
+                "or paste cf_clearance manually."
+            ),
+        )
+    include_names = {name.lower() for name in payload.include_names} if payload.include_names else None
+    wait_seconds = max(5, min(payload.wait_seconds or 0, 180))
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        cookies = await asyncio.to_thread(collect_browser_cookies, host, include_names)
+        if cookies:
+            updated = store.update_site_cookies(site_id, cookies)
+            return ReauthResponse(cookies_found=len(cookies), last_reauth_at=updated.last_reauth_at)
+        if time.monotonic() >= deadline:
+            raise HTTPException(
+                status_code=408,
+                detail="Cloudflare cookies were not detected. Complete the verification challenge and try again.",
+            )
+        await asyncio.sleep(2.0)
 
 
 @app.delete("/api/sites/{site_id}", status_code=204)
@@ -564,9 +765,10 @@ async def fetch_site_bodies(websites: List[Website]) -> List[str]:
 async def fetch_site_body(client: httpx.AsyncClient, site: Website) -> str:
     page_urls = build_page_urls(site)
     pages: List[str] = []
+    cookie_values = site_cookie_values(site)
     for page_url in page_urls:
         try:
-            response = await client.get(page_url)
+            response = await client.get(page_url, cookies=cookie_values or None)
             response.raise_for_status()
             text = response.text
             if len(text) > MAX_RESPONSE_BYTES:
