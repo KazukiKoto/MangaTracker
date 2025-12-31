@@ -22,6 +22,7 @@ const describePagination = (pagination) => {
 const WebsitesPage = () => {
   const {
     data: { websites },
+    status: { loading },
     actions: { addSite, updateSite, removeSite, reauthenticateSite },
   } = useTracker();
   const [editingId, setEditingId] = useState(null);
@@ -171,7 +172,11 @@ const WebsitesPage = () => {
       </Panel>
 
       <Panel title="Tracked Websites" copy="Existing sources currently being scanned">
-        {websites.length === 0 ? (
+        {loading ? (
+          <div className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
+            Loading tracked websites…
+          </div>
+        ) : websites.length === 0 ? (
           <p className="text-sm text-slate-500 dark:text-slate-400">No websites yet. Add one above to get started.</p>
         ) : (
           <ul className="flex flex-col gap-3">
@@ -282,7 +287,17 @@ const WebsitesPage = () => {
                           onClick={() => handleManualSubmit(site)}
                           disabled={manualSubmittingId === site.id}
                         >
-                          {manualSubmittingId === site.id ? "Saving…" : "Save cookies"}
+                          {manualSubmittingId === site.id ? (
+                            <span className="flex items-center gap-2">
+                              <span
+                                className="h-3 w-3 animate-spin rounded-full border border-current border-t-transparent"
+                                aria-hidden="true"
+                              />
+                              Saving…
+                            </span>
+                          ) : (
+                            "Save cookies"
+                          )}
                         </button>
                       </div>
                     )}

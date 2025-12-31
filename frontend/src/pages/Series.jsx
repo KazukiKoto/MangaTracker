@@ -19,6 +19,7 @@ const SORT_OPTIONS = [
 const SeriesPage = () => {
   const {
     data: { series, websites, tags },
+    status: { loading },
     actions: { addSeries, updateSeries, removeSeries, addTag, updateTag, removeTag },
   } = useTracker();
   const [editingId, setEditingId] = useState(null);
@@ -222,7 +223,11 @@ const SeriesPage = () => {
       </Panel>
 
       <Panel title="Tracked Manga" copy="Series currently being monitored">
-        {series.length === 0 ? (
+        {loading ? (
+          <div className="rounded-2xl border border-slate-100 bg-white/80 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
+            Loading tracked manga…
+          </div>
+        ) : series.length === 0 ? (
           <p className="text-sm text-slate-500 dark:text-slate-400">No titles yet. Add one above to get started.</p>
         ) : (
           <>

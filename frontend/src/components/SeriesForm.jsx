@@ -331,19 +331,15 @@ const SeriesForm = ({
             disabled={pending}
             className="inline-flex items-center justify-center rounded-full border border-white/60 bg-white/70 px-5 py-2 text-base font-semibold text-ink shadow-[0_15px_35px_rgba(5,19,26,0.18)] backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/90 dark:border-white/10 dark:bg-white/10 dark:text-white dark:hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isEditMode ? (
-              <span className="flex items-center gap-2">
-                <span>Update</span>
-                {pending && (
-                  <span
-                    className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
-                    aria-hidden="true"
-                  />
-                )}
-              </span>
-            ) : (
-              "Add"
-            )}
+            <span className="flex items-center gap-2">
+              <span>{isEditMode ? "Update" : "Add"}</span>
+              {pending && (
+                <span
+                  className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                  aria-hidden="true"
+                />
+              )}
+            </span>
           </button>
           {isEditMode && (
             <button
