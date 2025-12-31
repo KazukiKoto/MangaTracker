@@ -23,3 +23,6 @@ backend/data/*.bak
 
 # Log files
 *.log
+
+# Misc
+changes.md
