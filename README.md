@@ -1,6 +1,6 @@
 # Manga Tracker
 
-Manga tracking dashboard pairing a FastAPI backend with a Vite + React frontend. Automatically scans reader sites, surfaces overlapping titles, and syncs your "last read" state across browsers.
+> Manga tracking dashboard pairing a FastAPI backend with a Vite + React frontend. Automatically scans reader sites, surfaces overlapping titles, and syncs your "last read" state across browsers.
 
 ## Table of contents
 
@@ -45,9 +45,9 @@ A background poller snapshots every tracked site roughly once per minute, storin
 
 Windows users can bootstrap everything with one command:
 
-```pwsh
+\`\`\`pwsh
 ./start.ps1
-```
+\`\`\`
 
 Flags:
 
@@ -68,31 +68,31 @@ Visit `http://localhost:8000` (served SPA) or `http://localhost:5173` if you run
 
 ### Backend
 
-```pwsh
+\`\`\`pwsh
 cd backend
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
+\`\`\`
 
 Build the frontend once so FastAPI can serve frontend/dist:
 
-```pwsh
+\`\`\`pwsh
 cd ../frontend
 npm install
 npm run build
-```
+\`\`\`
 
 ### Frontend dev server
 
-```pwsh
+\`\`\`pwsh
 cd frontend
 npm install
 npm run dev -- --host 0.0.0.0
-```
+\`\`\`
 
-Open `http://<your-ip:5173` for live reload while the API remains on `http://<your-ip:8000`.
+Open `http://<your-ip>:5173` for live reload while the API remains on `http://<your-ip>:8000`.
 
 ## Configuration
 
@@ -105,8 +105,8 @@ Open `http://<your-ip:5173` for live reload while the API remains on `http://<yo
 1. Add websites: supply a label, base URL, and optional pagination strategy. The poller will begin caching the catalogue immediately.
 2. Add series: enter the title plus any aliases. Site-specific overrides fix slug differences (e.g., Asura vs Flame naming).
 3. Monitor overlaps:
-- The Dashboard surfaces unread chapters with counts, latest chapter labels, and quick Mark Read buttons.
-- Expand an entry to view a scrollable list of unread chapters. Clicking a chapter both opens it and records the read token.
+   - The Dashboard surfaces unread chapters with counts, latest chapter labels, and quick Mark Read buttons.
+   - Expand an entry to view a scrollable list of unread chapters. Clicking a chapter both opens it and records the read token.
 4. Tracked view: browse all matches alphabetically, paginate large libraries, and jump straight to a source site.
 5. Marking progress: Mark buttons and chapter clicks update `last_read_token` inside backend/data/series.json, keeping every browser in sync.
 6. Refreshing data: use the Refresh button within the UI for a new `/api/matches` call. The backend poller separately refreshes cached HTML about once per minute.
