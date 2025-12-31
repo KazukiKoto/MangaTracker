@@ -346,6 +346,7 @@ const request = async (path, options = {}) => {
 function App() {
   const [websites, setWebsites] = useState([]);
   const [series, setSeries] = useState([]);
+  const [tags, setTags] = useState([]);
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshingMatches, setRefreshingMatches] = useState(false);
@@ -356,13 +357,15 @@ function App() {
     try {
       setLoading(true);
       setError("");
-      const [siteData, seriesData, matchData] = await Promise.all([
+      const [siteData, seriesData, tagData, matchData] = await Promise.all([
         request("/api/sites"),
         request("/api/series"),
+        request("/api/tags"),
         request("/api/matches"),
       ]);
       setWebsites(siteData);
       setSeries(seriesData);
+      setTags(tagData);
       setMatches(matchData);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load data");
@@ -501,6 +504,52 @@ function App() {
         return response;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to refresh authentication";
+        setError(message);
+        throw err;
+      }
+    },
+    [hydrate]
+  );
+
+  const addTag = useCallback(
+    async (payload) => {
+      try {
+        setError("");
+        const created = await request("/api/tags", { method: "POST", body: payload });
+        setTags((prev) => [...prev, created]);
+        return created;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to add tag";
+        setError(message);
+        throw err;
+      }
+    },
+    []
+  );
+
+  const updateTag = useCallback(
+    async (tagId, payload) => {
+      try {
+        setError("");
+        await request(`/api/tags/${tagId}`, { method: "PUT", body: payload });
+        await hydrate();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to update tag";
+        setError(message);
+        throw err;
+      }
+    },
+    [hydrate]
+  );
+
+  const removeTag = useCallback(
+    async (tagId) => {
+      try {
+        setError("");
+        await request(`/api/tags/${tagId}`, { method: "DELETE" });
+        await hydrate();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to remove tag";
         setError(message);
         throw err;
       }
@@ -679,7 +728,7 @@ function App() {
 
   const contextValue = useMemo(
     () => ({
-      data: { websites, series, matches, matchSummaries, unreadMatches },
+      data: { websites, series, matches, matchSummaries, unreadMatches, tags },
       status: { loading, error, refreshingMatches },
       actions: {
         hydrate,
@@ -688,6 +737,9 @@ function App() {
         updateSite,
         removeSite,
         reauthenticateSite,
+        addTag,
+        updateTag,
+        removeTag,
         addSeries,
         updateSeries,
         removeSeries,
@@ -699,6 +751,7 @@ function App() {
       websites,
       series,
       matches,
+      tags,
       matchSummaries,
       unreadMatches,
       loading,
@@ -710,6 +763,9 @@ function App() {
       updateSite,
       removeSite,
       reauthenticateSite,
+      addTag,
+      updateTag,
+      removeTag,
       addSeries,
       updateSeries,
       removeSeries,

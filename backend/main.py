@@ -53,6 +53,7 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 WEBSITES_FILE = DATA_DIR / "websites.json"
 SERIES_FILE = DATA_DIR / "series.json"
+TAGS_FILE = DATA_DIR / "tags.json"
 
 
 def load_json_records(path: Path) -> List[Dict]:
@@ -90,6 +91,12 @@ def normalize_site_overrides(overrides: Optional[Dict[str, str]]) -> Dict[str, s
         if host and handle:
             result[host] = handle
     return result
+
+
+def normalize_tag_label(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    return value.strip()
 
 
 def site_to_public(site: Website) -> WebsitePublic:
@@ -279,6 +286,7 @@ class SeriesCreate(BaseModel):
     aliases: List[str] = Field(default_factory=list)
     site_overrides: Dict[str, str] = Field(default_factory=dict)
     last_read_token: Optional[str] = None
+    tag_ids: List[str] = Field(default_factory=list)
 
 
 class Series(SeriesCreate):
@@ -290,6 +298,19 @@ class SeriesUpdate(BaseModel):
     aliases: Optional[List[str]] = None
     site_overrides: Optional[Dict[str, str]] = None
     last_read_token: Optional[str] = None
+    tag_ids: Optional[List[str]] = None
+
+
+class TagCreate(BaseModel):
+    label: str
+
+
+class Tag(TagCreate):
+    id: str
+
+
+class TagUpdate(BaseModel):
+    label: Optional[str] = None
 
 
 class ChapterListing(BaseModel):
@@ -332,6 +353,7 @@ class InMemoryStore:
     def __init__(self) -> None:
         self.websites: Dict[str, Website] = {}
         self.series: Dict[str, Series] = {}
+        self.tags: Dict[str, Tag] = {}
         self.site_cache: Dict[str, str] = {}
         self.site_cache_meta: Dict[str, datetime] = {}
         self._load_from_disk()
@@ -411,6 +433,7 @@ class InMemoryStore:
         if not title:
             raise HTTPException(status_code=400, detail="Title cannot be empty")
         aliases = normalize_aliases(payload.aliases)
+        normalized_tags = self._normalize_tag_ids(payload.tag_ids)
         candidate_tokens = series_tokens(title, aliases)
         for existing in self.series.values():
             existing_tokens = series_tokens(existing.title, getattr(existing, "aliases", []) or [])
@@ -422,6 +445,7 @@ class InMemoryStore:
             aliases=aliases,
             site_overrides=normalize_site_overrides(payload.site_overrides),
             last_read_token=normalize_optional_str(payload.last_read_token),
+            tag_ids=normalized_tags,
         )
         self.series[record.id] = record
         self._persist_series()
@@ -454,6 +478,8 @@ class InMemoryStore:
             update_data["site_overrides"] = normalize_site_overrides(update_data["site_overrides"])
         if "last_read_token" in update_data:
             update_data["last_read_token"] = normalize_optional_str(update_data["last_read_token"])
+        if "tag_ids" in update_data:
+            update_data["tag_ids"] = self._normalize_tag_ids(update_data["tag_ids"])
 
         candidate_tokens = series_tokens(candidate_title, candidate_aliases)
         for existing_id, existing in self.series.items():
@@ -487,6 +513,14 @@ class InMemoryStore:
                 continue
             self.websites[site.id] = site
 
+        for payload in load_json_records(TAGS_FILE):
+            try:
+                tag = Tag(**payload)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Skipping invalid tag payload %s: %s", payload, exc)
+                continue
+            self.tags[tag.id] = tag
+
         for payload in load_json_records(SERIES_FILE):
             try:
                 record = Series(**payload)
@@ -506,6 +540,79 @@ class InMemoryStore:
             SERIES_FILE,
             [record.model_dump(mode="json") for record in self.series.values()],
         )
+
+    def _persist_tags(self) -> None:
+        write_json_records(
+            TAGS_FILE,
+            [tag.model_dump(mode="json") for tag in self.tags.values()],
+        )
+
+    def _normalize_tag_ids(self, tag_ids: Iterable[str] | None) -> List[str]:
+        normalized: List[str] = []
+        if not tag_ids:
+            return normalized
+        for raw in tag_ids:
+            if raw is None:
+                continue
+            tag_id = str(raw).strip()
+            if not tag_id:
+                continue
+            if tag_id not in self.tags:
+                raise HTTPException(status_code=400, detail=f"Unknown tag: {tag_id}")
+            if tag_id not in normalized:
+                normalized.append(tag_id)
+        return normalized
+
+    def _ensure_unique_tag_label(self, label: str, exclude_id: Optional[str] = None) -> None:
+        needle = label.casefold()
+        for tag_id, tag in self.tags.items():
+            if exclude_id and tag_id == exclude_id:
+                continue
+            if tag.label.casefold() == needle:
+                raise HTTPException(status_code=409, detail="Tag label already exists")
+
+    def add_tag(self, payload: TagCreate) -> Tag:
+        label = normalize_tag_label(payload.label)
+        if not label:
+            raise HTTPException(status_code=400, detail="Label cannot be empty")
+        self._ensure_unique_tag_label(label)
+        tag = Tag(id=str(uuid4()), label=label)
+        self.tags[tag.id] = tag
+        self._persist_tags()
+        return tag
+
+    def update_tag(self, tag_id: str, payload: TagUpdate) -> Tag:
+        tag = self.tags.get(tag_id)
+        if tag is None:
+            raise HTTPException(status_code=404, detail="Tag not found")
+        update_data = payload.model_dump(exclude_unset=True)
+        if "label" in update_data and update_data["label"] is not None:
+            label = normalize_tag_label(update_data["label"])
+            if not label:
+                raise HTTPException(status_code=400, detail="Label cannot be empty")
+            self._ensure_unique_tag_label(label, exclude_id=tag_id)
+            update_data["label"] = label
+        updated = tag.model_copy(update=update_data)
+        self.tags[tag_id] = updated
+        self._persist_tags()
+        return updated
+
+    def remove_tag(self, tag_id: str) -> None:
+        if tag_id not in self.tags:
+            raise HTTPException(status_code=404, detail="Tag not found")
+        del self.tags[tag_id]
+        self._persist_tags()
+        modified = False
+        for series_id, record in list(self.series.items()):
+            tag_ids = list(record.tag_ids or [])
+            if tag_id not in tag_ids:
+                continue
+            updated_tags = [value for value in tag_ids if value != tag_id]
+            updated = record.model_copy(update={"tag_ids": updated_tags})
+            self.series[series_id] = updated
+            modified = True
+        if modified:
+            self._persist_series()
 
 
 store = InMemoryStore()
@@ -647,6 +754,27 @@ def update_series(series_id: str, payload: SeriesUpdate) -> Series:
 @app.delete("/api/series/{series_id}", status_code=204)
 def delete_series(series_id: str) -> Response:
     store.remove_series(series_id)
+    return Response(status_code=204)
+
+
+@app.get("/api/tags", response_model=List[Tag])
+def list_tags() -> List[Tag]:
+    return list(store.tags.values())
+
+
+@app.post("/api/tags", response_model=Tag, status_code=201)
+def create_tag(payload: TagCreate) -> Tag:
+    return store.add_tag(payload)
+
+
+@app.put("/api/tags/{tag_id}", response_model=Tag)
+def update_tag(tag_id: str, payload: TagUpdate) -> Tag:
+    return store.update_tag(tag_id, payload)
+
+
+@app.delete("/api/tags/{tag_id}", status_code=204)
+def delete_tag(tag_id: str) -> Response:
+    store.remove_tag(tag_id)
     return Response(status_code=204)
 
 

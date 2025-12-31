@@ -18,8 +18,8 @@ const SORT_OPTIONS = [
 
 const SeriesPage = () => {
   const {
-    data: { series, websites },
-    actions: { addSeries, updateSeries, removeSeries },
+    data: { series, websites, tags },
+    actions: { addSeries, updateSeries, removeSeries, addTag, updateTag, removeTag },
   } = useTracker();
   const [editingId, setEditingId] = useState(null);
   const [formPending, setFormPending] = useState(false);
@@ -35,12 +35,37 @@ const SeriesPage = () => {
     [series, editingId]
   );
 
+  const orderedTags = useMemo(() => {
+    return [...tags].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+  }, [tags]);
+
+  const tagLookup = useMemo(() => {
+    const map = new Map();
+    tags.forEach((tag) => {
+      map.set(tag.id, tag.label);
+    });
+    return map;
+  }, [tags]);
+
   const filteredSeries = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
+    const rawTerm = searchTerm.trim();
+    const isTagQuery = rawTerm.startsWith("#");
+    const tagTerm = rawTerm.replace(/^#+/, "").trim().toLowerCase();
+    const tagSearchActive = isTagQuery && tagTerm.length > 0;
+    const normalizedTextTerm = tagSearchActive ? "" : rawTerm.toLowerCase();
+    const matchingTagIds = tagSearchActive
+      ? tags.filter((tag) => tag.label.toLowerCase().includes(tagTerm)).map((tag) => tag.id)
+      : [];
     return series.filter((item) => {
-      if (term) {
+      if (tagSearchActive) {
+        if (!matchingTagIds.length) {
+          return false;
+        }
+        return (item.tag_ids ?? []).some((tagId) => matchingTagIds.includes(tagId));
+      }
+      if (normalizedTextTerm) {
         const values = [item.title, ...(item.aliases ?? [])];
-        const matchesTerm = values.some((value) => value && value.toLowerCase().includes(term));
+        const matchesTerm = values.some((value) => value && value.toLowerCase().includes(normalizedTextTerm));
         if (!matchesTerm) {
           return false;
         }
@@ -53,7 +78,7 @@ const SeriesPage = () => {
       }
       return true;
     });
-  }, [series, searchTerm, activeFilters]);
+  }, [series, searchTerm, activeFilters, tags]);
 
   const sortedSeries = useMemo(() => {
     const list = [...filteredSeries];
@@ -147,13 +172,13 @@ const SeriesPage = () => {
   };
   const clearFilters = () => setActiveFilters({ aliases: false, overrides: false });
 
-  const handleCreate = async ({ title, aliases, site_overrides }) => {
-    await addSeries({ title, aliases, site_overrides });
+  const handleCreate = async (payload) => {
+    await addSeries(payload);
   };
 
-  const handleUpdate = async ({ title, aliases, site_overrides }) => {
+  const handleUpdate = async (payload) => {
     if (!editingId) return;
-    await updateSeries(editingId, { title, aliases, site_overrides });
+    await updateSeries(editingId, payload);
     setEditingId(null);
   };
 
@@ -184,9 +209,14 @@ const SeriesPage = () => {
           initialValue={editingSeries?.title ?? ""}
           initialAliases={editingSeries?.aliases ?? []}
           initialOverrides={editingSeries?.site_overrides ?? {}}
+          initialTagIds={editingSeries?.tag_ids ?? []}
+          availableTags={orderedTags}
           websites={websites}
           onSubmit={editingSeries ? handleUpdate : handleCreate}
           onCancel={() => setEditingId(null)}
+          onCreateTag={addTag}
+          onUpdateTag={updateTag}
+          onDeleteTag={removeTag}
           onPendingChange={setFormPending}
         />
       </Panel>
@@ -203,7 +233,7 @@ const SeriesPage = () => {
                   type="search"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Title or alias"
+                  placeholder="Title, alias, or #tag"
                   className="w-full rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900/60 dark:text-white lg:max-w-md"
                 />
               </label>
@@ -314,6 +344,7 @@ const SeriesPage = () => {
                 {visibleSeries.map((item) => {
                   const aliasCount = item.aliases?.length ?? 0;
                   const overrideCount = Object.keys(item.site_overrides ?? {}).length;
+                  const tagLabels = (item.tag_ids ?? []).map((tagId) => tagLookup.get(tagId)).filter(Boolean);
                   return (
                     <li
                       key={item.id}
@@ -329,6 +360,11 @@ const SeriesPage = () => {
                         {overrideCount > 0 && (
                           <p className="text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
                             {overrideCount} override{overrideCount === 1 ? "" : "s"}
+                          </p>
+                        )}
+                        {tagLabels.length > 0 && (
+                          <p className="text-[11px] uppercase tracking-wide text-glow">
+                            Tags: {tagLabels.join(", ")}
                           </p>
                         )}
                       </div>
