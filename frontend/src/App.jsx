@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout";
 import DashboardPage from "./pages/Dashboard";
@@ -20,6 +20,7 @@ const deriveApiBase = () => {
 };
 
 const API_BASE = deriveApiBase();
+const AUTO_REFRESH_INTERVAL_MS = 60_000;
 
 const selectLatestSource = (match) => {
   if (!match || !Array.isArray(match.sources) || !match.sources.length) {
@@ -349,6 +350,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [refreshingMatches, setRefreshingMatches] = useState(false);
   const [error, setError] = useState("");
+  const autoRefreshTimerRef = useRef(null);
 
   const hydrate = useCallback(async () => {
     try {
@@ -387,6 +389,35 @@ function App() {
       setRefreshingMatches(false);
     }
   }, []);
+
+  const queueAutoRefresh = useCallback(() => {
+    if (autoRefreshTimerRef.current) {
+      clearTimeout(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
+    if (typeof window === "undefined") {
+      return;
+    }
+    autoRefreshTimerRef.current = window.setTimeout(() => {
+      refreshMatches().catch((err) => console.error("Auto refresh failed", err));
+    }, AUTO_REFRESH_INTERVAL_MS);
+  }, [refreshMatches]);
+
+  useEffect(() => {
+    if (autoRefreshTimerRef.current) {
+      clearTimeout(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
+    if (!loading && !refreshingMatches) {
+      queueAutoRefresh();
+    }
+    return () => {
+      if (autoRefreshTimerRef.current) {
+        clearTimeout(autoRefreshTimerRef.current);
+        autoRefreshTimerRef.current = null;
+      }
+    };
+  }, [loading, refreshingMatches, queueAutoRefresh]);
 
   const seriesLookup = useMemo(() => {
     const map = new Map();
