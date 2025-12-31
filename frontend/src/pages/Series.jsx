@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Panel from "../components/Panel";
 import SeriesForm from "../components/SeriesForm";
 import { useTracker } from "../context/TrackerContext";
@@ -22,11 +22,13 @@ const SeriesPage = () => {
     actions: { addSeries, updateSeries, removeSeries },
   } = useTracker();
   const [editingId, setEditingId] = useState(null);
+  const [formPending, setFormPending] = useState(false);
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortOption, setSortOption] = useState("title-asc");
   const [activeFilters, setActiveFilters] = useState({ aliases: false, overrides: false });
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const formPanelRef = useRef(null);
 
   const editingSeries = useMemo(
     () => series.find((item) => item.id === editingId) ?? null,
@@ -113,6 +115,16 @@ const SeriesPage = () => {
     }
   }, [activeFilters]);
 
+  useEffect(() => {
+    if (editingId && formPanelRef.current) {
+      formPanelRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      const firstInput = formPanelRef.current.querySelector("input");
+      if (firstInput) {
+        firstInput.focus({ preventScroll: true });
+      }
+    }
+  }, [editingId]);
+
   const currentPage = Math.min(page, totalPages);
   const sliceStart = (currentPage - 1) * PAGE_SIZE;
   const visibleSeries = sortedSeries.slice(sliceStart, sliceStart + PAGE_SIZE);
@@ -159,6 +171,7 @@ const SeriesPage = () => {
   return (
     <div className="flex flex-col gap-8">
       <Panel
+        ref={formPanelRef}
         title={editingSeries ? "Edit Tracked Manga" : "Add Tracked Manga"}
         copy={
           editingSeries
@@ -174,6 +187,7 @@ const SeriesPage = () => {
           websites={websites}
           onSubmit={editingSeries ? handleUpdate : handleCreate}
           onCancel={() => setEditingId(null)}
+          onPendingChange={setFormPending}
         />
       </Panel>
 
@@ -322,6 +336,7 @@ const SeriesPage = () => {
                         <button
                           className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600 hover:border-slate-500 dark:border-slate-600 dark:text-slate-200 dark:hover:border-slate-400"
                           onClick={() => setEditingId(item.id)}
+                          disabled={formPending}
                         >
                           Edit
                         </button>
