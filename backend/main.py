@@ -204,8 +204,24 @@ SCAN_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 MAX_RESPONSE_BYTES = 1_000_000
 USER_AGENT = "MangaTrackerBot/0.1 (+https://github.com/)"
 POLL_INTERVAL_SECONDS = 60
-CHAPTER_REGEX = re.compile(r"(?:chapter|ch\.?|c)\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
+CHAPTER_REGEX = re.compile(r"(?:chapter|chap|ch\.?|c)\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
 MAX_CANDIDATE_ELEMENTS = 8000
+CANDIDATE_TAGS = [
+    "a",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "strong",
+    "em",
+    "p",
+    "li",
+    "span",
+    "div",
+]
+ATTRIBUTE_TEXT_FIELDS = ("title", "aria-label", "data-title", "data-name", "data-label", "data-chapter")
 
 poller_task: asyncio.Task | None = None
 
@@ -840,33 +856,43 @@ def apply_query_pagination(base_url: str, parameter: str, page_number: int) -> s
 
 def extract_candidate_entries(soup: BeautifulSoup, base_url: str) -> List[CandidateEntry]:
     entries: List[CandidateEntry] = []
-    tags = soup.find_all(
-        ["a", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "em", "p", "li"]
-    )
+    tags = soup.find_all(CANDIDATE_TAGS)
     for element in tags:
-        text = element.get_text(" ", strip=True)
-        norm = normalize_text(text)
-        if not norm:
-            continue
         href = element.get("href")
         link = urljoin(base_url, href) if href else None
         parent_text = (
-            element.parent.get_text(" ", strip=True)
-            if element.parent is not None
-            else ""
+            element.parent.get_text(" ", strip=True) if element.parent is not None else ""
         )
-        context = parent_text if parent_text and parent_text != text else ""
-        entries.append(
-            {
-                "text": text,
-                "norm": norm,
-                "tokens": norm.split(),
-                "link": link,
-                "context": context,
-            }
-        )
-        if len(entries) >= MAX_CANDIDATE_ELEMENTS:
-            break
+        snippets: List[str] = []
+        text = element.get_text(" ", strip=True)
+        if text:
+            snippets.append(text)
+        for attr in ATTRIBUTE_TEXT_FIELDS:
+            value = element.get(attr)
+            if isinstance(value, str):
+                candidate = value.strip()
+                if candidate:
+                    snippets.append(candidate)
+        seen_snippets: Set[str] = set()
+        for snippet in snippets:
+            if snippet in seen_snippets:
+                continue
+            seen_snippets.add(snippet)
+            norm = normalize_text(snippet)
+            if not norm:
+                continue
+            context = parent_text if parent_text and parent_text != snippet else ""
+            entries.append(
+                {
+                    "text": snippet,
+                    "norm": norm,
+                    "tokens": norm.split(),
+                    "link": link,
+                    "context": context,
+                }
+            )
+            if len(entries) >= MAX_CANDIDATE_ELEMENTS:
+                return entries
     return entries
 
 
@@ -1027,15 +1053,19 @@ def build_canonical_map(records: Iterable[Series]) -> Dict[str, str]:
     return mapping
 
 
-PROGRESS_KEYWORDS = {"chapter", "ch", "vol", "volume", "episode", "ep", "season"}
+PROGRESS_KEYWORDS = {"chapter", "chap", "ch", "vol", "volume", "episode", "ep", "season"}
+PROGRESS_PREFIXES = tuple(sorted(PROGRESS_KEYWORDS, key=len, reverse=True))
 
 
 def contains_progress_keyword(tokens: List[str]) -> bool:
     for token in tokens:
         if token in PROGRESS_KEYWORDS:
             return True
-        if token.isdigit():
-            return True
+        for prefix in PROGRESS_PREFIXES:
+            if token.startswith(prefix) and token != prefix:
+                suffix = token[len(prefix) :]
+                if suffix.isdigit():
+                    return True
     return False
 
 
