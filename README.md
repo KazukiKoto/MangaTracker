@@ -36,49 +36,73 @@ A background poller snapshots every tracked site roughly once per minute, storin
 
 ## Prerequisites
 
+### Using Docker (Recommended)
+- Docker
+- Docker Compose
+
+### Manual Setup
 - Python 3.11+
 - Node.js 18+
-- Git (optional)
-- PowerShell 7+ on Windows if you plan to use `start.ps1`
 
 ## Quick start
 
-Windows users can bootstrap everything with one command:
+### Using Docker (Recommended)
 
-```pwsh
-./start.ps1
+The easiest way to get started is with Docker Compose:
+
+```bash
+docker compose up -d
 ```
 
-Flags:
+Or use the provided Makefile:
 
-- -SkipPipInstall – reuse existing Python dependencies.
-- -SkipNpmInstall – skip npm install for faster repeats.
+```bash
+make start
+```
 
-The script will:
+This will:
+1. Build the frontend (Node.js build stage)
+2. Build the backend (Python environment)
+3. Start the application on `http://localhost:8000`
 
-1. Create/activate `.venv` in backend/ (if missing).
-2. Install Python requirements.
-3. Install frontend dependencies.
-4. Build the React app.
-5. Launch `uvicorn backend.main:app --reload`.
+Data is persisted in `./backend/data` via a Docker volume.
 
-Visit `http://localhost:8000` (served SPA) or `http://localhost:5173` if you run `npm run dev`.
+To stop the application:
+```bash
+make stop
+# or
+docker compose down
+```
+
+To rebuild after changes:
+```bash
+make rebuild
+# or
+docker compose up -d --build
+```
 
 ## Manual setup
 
+For development or if you prefer not to use Docker:
+
 ### Backend
 
-```pwsh
+```bash
 cd backend
 python -m venv .venv
+
+# On Windows:
 .\.venv\Scripts\activate
+# On macOS/Linux:
+source .venv/bin/activate
+
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Build the frontend once so FastAPI can serve frontend/dist:
+Build the frontend once so FastAPI can serve `frontend/dist`:
 
-```pwsh
+```bash
 cd ../frontend
 npm install
 npm run build
@@ -86,13 +110,15 @@ npm run build
 
 ### Frontend dev server
 
-```pwsh
+For frontend development with hot reload:
+
+```bash
 cd frontend
 npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-Open `http://<your-ip:5173` for live reload while the API remains on `http://<your-ip:8000`.
+Open `http://localhost:5173` for live reload while the API remains on `http://localhost:8000`.
 
 ## Configuration
 
@@ -139,7 +165,7 @@ FastAPI also serves frontend/dist when the frontend has been built, so one proce
 
 - No matches appear: ensure at least one site and one series exist, then click Refresh. Check backend logs for fetch errors if the site snapshot is missing.
 - Chapters display "Unknown": some sites hide numbers entirely. Confirm pagination covers all catalogue pages and that the site exposes chapter digits.
-- Cannot reach the app from another device: run both servers with --host 0.0.0.0, find your LAN IP via `ipconfig`, and allow ports 8000/5173 through the firewall.
+- Cannot reach the app from another device: run both servers with `--host 0.0.0.0`, find your LAN IP via `ipconfig` (Windows) or `ifconfig` (macOS/Linux), and allow ports 8000/5173 through the firewall.
 - Frontend cannot hit the API: set VITE_API_BASE to the backend URL when running the dev server or hosting on separate ports.
 
 Happy tracking!
