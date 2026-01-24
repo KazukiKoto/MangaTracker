@@ -88,7 +88,7 @@ const TrackedPage = () => {
     : "Add at least one site and one series to surface overlaps.";
 
   const handleRefresh = () => {
-    refreshMatches().catch((err) => console.error(err));
+    refreshMatches({ force: true }).catch((err) => console.error(err));
   };
 
   return (

@@ -46,7 +46,7 @@ const DashboardPage = () => {
   );
 
   const refresh = () => {
-    refreshMatches().catch((err) => console.error(err));
+    refreshMatches({ force: true }).catch((err) => console.error(err));
   };
 
   const markEntryRead = (entry) => {

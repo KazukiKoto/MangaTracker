@@ -27,6 +27,7 @@ const getInitialTheme = () => {
 const Layout = () => {
   const {
     status: { error },
+    actions: { clearError },
   } = useTracker();
   const [theme, setTheme] = useState(() => getInitialTheme());
 
@@ -87,8 +88,16 @@ const Layout = () => {
           </nav>
         </header>
         {error && (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">
-            {error}
+          <div className="flex items-start justify-between gap-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">
+            <span className="flex-1 leading-relaxed">{error}</span>
+            <button
+              type="button"
+              onClick={clearError}
+              aria-label="Dismiss error"
+              className="rounded-full border border-rose-300/60 px-2 py-1 text-xs font-semibold text-rose-600 transition hover:border-rose-400 hover:bg-rose-100 dark:border-rose-400/50 dark:text-rose-200 dark:hover:border-rose-300 dark:hover:bg-rose-300/10"
+            >
+              Close
+            </button>
           </div>
         )}
         <Outlet />

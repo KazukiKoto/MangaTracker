@@ -5,7 +5,7 @@ import logging
 import os
 import subprocess
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 from pathlib import Path
 import re
@@ -211,6 +211,7 @@ SCAN_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 MAX_RESPONSE_BYTES = 1_000_000
 USER_AGENT = "MangaTrackerBot/0.1 (+https://github.com/)"
 POLL_INTERVAL_SECONDS = 60
+MATCH_CACHE_TTL_SECONDS = 30
 CHAPTER_REGEX = re.compile(r"(?:chapter|chap|ch\.?|c)\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
 MAX_CANDIDATE_ELEMENTS = 8000
 CANDIDATE_TAGS = [
@@ -356,6 +357,7 @@ class InMemoryStore:
         self.tags: Dict[str, Tag] = {}
         self.site_cache: Dict[str, str] = {}
         self.site_cache_meta: Dict[str, datetime] = {}
+        self._matches_cache: tuple[List[Match], datetime] | None = None
         self._load_from_disk()
 
     def add_site(self, payload: WebsiteCreate) -> Website:
@@ -373,6 +375,7 @@ class InMemoryStore:
         )
         self.websites[site.id] = site
         self._persist_websites()
+        self.invalidate_matches_cache()
         return site
 
     def remove_site(self, site_id: str) -> None:
@@ -382,6 +385,7 @@ class InMemoryStore:
         self.site_cache.pop(site_id, None)
         self.site_cache_meta.pop(site_id, None)
         self._persist_websites()
+        self.invalidate_matches_cache()
 
     def update_site(self, site_id: str, payload: WebsiteUpdate) -> Website:
         site = self.websites.get(site_id)
@@ -416,6 +420,7 @@ class InMemoryStore:
         updated = site.model_copy(update=update_data)
         self.websites[site_id] = updated
         self._persist_websites()
+        self.invalidate_matches_cache()
         return updated
 
     def update_site_cookies(self, site_id: str, cookies: List[StoredCookie]) -> Website:
@@ -426,6 +431,7 @@ class InMemoryStore:
         updated = site.model_copy(update={"auth_cookies": cookies, "last_reauth_at": timestamp})
         self.websites[site_id] = updated
         self._persist_websites()
+        self.invalidate_matches_cache()
         return updated
 
     def add_series(self, payload: SeriesCreate) -> Series:
@@ -449,6 +455,7 @@ class InMemoryStore:
         )
         self.series[record.id] = record
         self._persist_series()
+        self.invalidate_matches_cache()
         return record
 
     def remove_series(self, series_id: str) -> None:
@@ -456,6 +463,7 @@ class InMemoryStore:
             raise HTTPException(status_code=404, detail="Series not found")
         del self.series[series_id]
         self._persist_series()
+        self.invalidate_matches_cache()
 
     def update_series(self, series_id: str, payload: SeriesUpdate) -> Series:
         record = self.series.get(series_id)
@@ -492,6 +500,7 @@ class InMemoryStore:
         updated = record.model_copy(update=update_data)
         self.series[series_id] = updated
         self._persist_series()
+        self.invalidate_matches_cache()
         return updated
 
     def record_site_snapshot(
@@ -546,6 +555,20 @@ class InMemoryStore:
             TAGS_FILE,
             [tag.model_dump(mode="json") for tag in self.tags.values()],
         )
+
+    def get_matches_cache(self) -> Optional[List[Match]]:
+        if not self._matches_cache:
+            return None
+        matches, timestamp = self._matches_cache
+        if datetime.now(timezone.utc) - timestamp > timedelta(seconds=MATCH_CACHE_TTL_SECONDS):
+            return None
+        return matches
+
+    def set_matches_cache(self, matches: List[Match]) -> None:
+        self._matches_cache = (matches, datetime.now(timezone.utc))
+
+    def invalidate_matches_cache(self) -> None:
+        self._matches_cache = None
 
     def _normalize_tag_ids(self, tag_ids: Iterable[str] | None) -> List[str]:
         normalized: List[str] = []
@@ -779,8 +802,14 @@ def delete_tag(tag_id: str) -> Response:
 
 
 @app.get("/api/matches", response_model=List[Match])
-async def now_reading() -> List[Match]:
+async def now_reading(refresh: bool = False) -> List[Match]:
+    if not refresh:
+        cached = store.get_matches_cache()
+        if cached is not None:
+            return cached
+
     if not store.websites or not store.series:
+        store.set_matches_cache([])
         return []
 
     series_terms = build_series_terms(store.series.values())
@@ -792,6 +821,7 @@ async def now_reading() -> List[Match]:
     websites = list(store.websites.values())
     matches, missing_cache = await scan_sites_for_series(websites, series_terms)
     if matches:
+        store.set_matches_cache(matches)
         return matches
 
     if missing_cache:
@@ -799,7 +829,9 @@ async def now_reading() -> List[Match]:
         asyncio.create_task(refresh_site_cache(websites))
 
     # Fallback to mock catalogs when live scanning yields nothing
-    return collect_mock_matches(websites, canonical_map)
+    fallback = collect_mock_matches(websites, canonical_map)
+    store.set_matches_cache(fallback)
+    return fallback
 
 
 def _get_index_file() -> Path:

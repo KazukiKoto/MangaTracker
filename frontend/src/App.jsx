@@ -21,6 +21,7 @@ const deriveApiBase = () => {
 
 const API_BASE = deriveApiBase();
 const AUTO_REFRESH_INTERVAL_MS = 60_000;
+const ERROR_DISMISS_MS = 6_000;
 
 const selectLatestSource = (match) => {
   if (!match || !Array.isArray(match.sources) || !match.sources.length) {
@@ -352,46 +353,98 @@ function App() {
   const [refreshingMatches, setRefreshingMatches] = useState(false);
   const [error, setError] = useState("");
   const autoRefreshTimerRef = useRef(null);
+  const errorTimerRef = useRef(null);
+  const clearError = useCallback(() => {
+    setError("");
+  }, []);
+
+  const fetchSites = useCallback(async () => {
+    const siteData = await request("/api/sites");
+    setWebsites(siteData);
+    return siteData;
+  }, []);
+
+  const fetchSeries = useCallback(async () => {
+    const seriesData = await request("/api/series");
+    setSeries(seriesData);
+    return seriesData;
+  }, []);
+
+  const fetchTags = useCallback(async () => {
+    const tagData = await request("/api/tags");
+    setTags(tagData);
+    return tagData;
+  }, []);
+
+  const fetchCoreData = useCallback(async () => {
+    await Promise.all([fetchSites(), fetchSeries(), fetchTags()]);
+  }, [fetchSites, fetchSeries, fetchTags]);
+
+  const refreshMatches = useCallback(
+    async ({ force = false } = {}) => {
+      try {
+        setRefreshingMatches(true);
+        setError("");
+        const endpoint = force ? "/api/matches?refresh=1" : "/api/matches";
+        const updatedMatches = await request(endpoint);
+        setMatches(updatedMatches);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to refresh matches";
+        setError(message);
+        throw err;
+      } finally {
+        setRefreshingMatches(false);
+      }
+    },
+    []
+  );
 
   const hydrate = useCallback(async () => {
+    let loaded = false;
     try {
       setLoading(true);
       setError("");
-      const [siteData, seriesData, tagData, matchData] = await Promise.all([
-        request("/api/sites"),
-        request("/api/series"),
-        request("/api/tags"),
-        request("/api/matches"),
-      ]);
-      setWebsites(siteData);
-      setSeries(seriesData);
-      setTags(tagData);
-      setMatches(matchData);
+      await fetchCoreData();
+      loaded = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load data");
     } finally {
       setLoading(false);
     }
-  }, []);
+    if (loaded) {
+      refreshMatches().catch((err) => console.error("Initial match refresh failed", err));
+    }
+  }, [fetchCoreData, refreshMatches]);
 
   useEffect(() => {
     hydrate();
   }, [hydrate]);
 
-  const refreshMatches = useCallback(async () => {
-    try {
-      setRefreshingMatches(true);
-      setError("");
-      const updatedMatches = await request("/api/matches");
-      setMatches(updatedMatches);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to refresh matches";
-      setError(message);
-      throw err;
-    } finally {
-      setRefreshingMatches(false);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
     }
-  }, []);
+    if (!error) {
+      if (errorTimerRef.current) {
+        window.clearTimeout(errorTimerRef.current);
+        errorTimerRef.current = null;
+      }
+      return;
+    }
+    if (errorTimerRef.current) {
+      window.clearTimeout(errorTimerRef.current);
+    }
+    errorTimerRef.current = window.setTimeout(() => {
+      setError("");
+      errorTimerRef.current = null;
+    }, ERROR_DISMISS_MS);
+    return () => {
+      if (errorTimerRef.current) {
+        window.clearTimeout(errorTimerRef.current);
+        errorTimerRef.current = null;
+      }
+    };
+  }, [error]);
 
   const queueAutoRefresh = useCallback(() => {
     if (autoRefreshTimerRef.current) {
@@ -455,14 +508,15 @@ function App() {
       try {
         setError("");
         await request("/api/sites", { method: "POST", body: payload });
-        await hydrate();
+        await fetchSites();
+        refreshMatches({ force: true }).catch((err) => console.error("Match refresh after add site failed", err));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to add website";
         setError(message);
         throw err;
       }
     },
-    [hydrate]
+    [fetchSites, refreshMatches]
   );
 
   const updateSite = useCallback(
@@ -470,14 +524,15 @@ function App() {
       try {
         setError("");
         await request(`/api/sites/${siteId}`, { method: "PUT", body: payload });
-        await hydrate();
+        await fetchSites();
+        refreshMatches({ force: true }).catch((err) => console.error("Match refresh after update site failed", err));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to update website";
         setError(message);
         throw err;
       }
     },
-    [hydrate]
+    [fetchSites, refreshMatches]
   );
 
   const removeSite = useCallback(
@@ -485,14 +540,15 @@ function App() {
       try {
         setError("");
         await request(`/api/sites/${siteId}`, { method: "DELETE" });
-        await hydrate();
+        await fetchSites();
+        refreshMatches({ force: true }).catch((err) => console.error("Match refresh after remove site failed", err));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to remove website";
         setError(message);
         throw err;
       }
     },
-    [hydrate]
+    [fetchSites, refreshMatches]
   );
 
   const reauthenticateSite = useCallback(
@@ -500,7 +556,8 @@ function App() {
       try {
         setError("");
         const response = await request(`/api/sites/${siteId}/reauth`, { method: "POST", body: options });
-        await hydrate();
+        await fetchSites();
+        refreshMatches({ force: true }).catch((err) => console.error("Match refresh after reauth failed", err));
         return response;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to refresh authentication";
@@ -508,7 +565,7 @@ function App() {
         throw err;
       }
     },
-    [hydrate]
+    [fetchSites, refreshMatches]
   );
 
   const addTag = useCallback(
@@ -531,15 +588,15 @@ function App() {
     async (tagId, payload) => {
       try {
         setError("");
-        await request(`/api/tags/${tagId}`, { method: "PUT", body: payload });
-        await hydrate();
+        const updated = await request(`/api/tags/${tagId}`, { method: "PUT", body: payload });
+        setTags((prev) => prev.map((tag) => (tag.id === updated.id ? updated : tag)));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to update tag";
         setError(message);
         throw err;
       }
     },
-    [hydrate]
+    []
   );
 
   const removeTag = useCallback(
@@ -547,44 +604,58 @@ function App() {
       try {
         setError("");
         await request(`/api/tags/${tagId}`, { method: "DELETE" });
-        await hydrate();
+        setTags((prev) => prev.filter((tag) => tag.id !== tagId));
+        setSeries((prev) =>
+          prev.map((record) => {
+            const tagIds = record.tag_ids ?? [];
+            if (!tagIds.length || !tagIds.includes(tagId)) {
+              return record;
+            }
+            const updatedTagIds = tagIds.filter((value) => value !== tagId);
+            return { ...record, tag_ids: updatedTagIds };
+          })
+        );
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to remove tag";
         setError(message);
         throw err;
       }
     },
-    [hydrate]
+    []
   );
 
   const addSeries = useCallback(
     async (payload) => {
       try {
         setError("");
-        await request("/api/series", { method: "POST", body: payload });
-        await hydrate();
+        const created = await request("/api/series", { method: "POST", body: payload });
+        setSeries((prev) => [...prev, created]);
+        refreshMatches({ force: true }).catch((err) => console.error("Match refresh after add series failed", err));
+        return created;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to add series";
         setError(message);
         throw err;
       }
     },
-    [hydrate]
+    [refreshMatches]
   );
 
   const updateSeries = useCallback(
     async (seriesId, payload) => {
       try {
         setError("");
-        await request(`/api/series/${seriesId}`, { method: "PUT", body: payload });
-        await hydrate();
+        const updated = await request(`/api/series/${seriesId}`, { method: "PUT", body: payload });
+        setSeries((prev) => prev.map((record) => (record.id === updated.id ? updated : record)));
+        refreshMatches({ force: true }).catch((err) => console.error("Match refresh after update series failed", err));
+        return updated;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to update series";
         setError(message);
         throw err;
       }
     },
-    [hydrate]
+    [refreshMatches]
   );
 
   const removeSeries = useCallback(
@@ -592,14 +663,15 @@ function App() {
       try {
         setError("");
         await request(`/api/series/${seriesId}`, { method: "DELETE" });
-        await hydrate();
+        setSeries((prev) => prev.filter((record) => record.id !== seriesId));
+        refreshMatches({ force: true }).catch((err) => console.error("Match refresh after remove series failed", err));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to remove series";
         setError(message);
         throw err;
       }
     },
-    [hydrate]
+    [refreshMatches]
   );
 
   const matchSummaries = useMemo(() => {
@@ -733,6 +805,7 @@ function App() {
       actions: {
         hydrate,
         refreshMatches,
+        clearError,
         addSite,
         updateSite,
         removeSite,
@@ -759,6 +832,7 @@ function App() {
       error,
       hydrate,
       refreshMatches,
+      clearError,
       addSite,
       updateSite,
       removeSite,
